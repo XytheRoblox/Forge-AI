@@ -1,0 +1,159 @@
+import { useState } from "react";
+import { api } from "../api";
+import { EndpointList } from "../components/wizard/EndpointList";
+import type { Agent, EndpointSpec } from "../types";
+
+interface Props {
+  agent: Agent;
+  onBack: () => void;
+  onStopped: (agent: Agent) => void;
+  onRebuild: (agent: Agent) => void;
+  notify: (message: string, kind?: "success" | "error") => void;
+}
+
+export function AgentPage({ agent, onBack, onStopped, onRebuild, notify }: Props) {
+  const [stopping, setStopping] = useState(false);
+  const [themeColor, setThemeColor] = useState(agent.theme_color);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [editingEndpoints, setEditingEndpoints] = useState<EndpointSpec[] | null>(null);
+  const [savingEndpoints, setSavingEndpoints] = useState(false);
+
+  const webpageUrl = agent.container_port ? `http://localhost:${agent.container_port}/` : null;
+
+  async function handleStop() {
+    setStopping(true);
+    try {
+      const stopped = await api.stopAgent(agent.id);
+      notify(`"${agent.name}"'s container was stopped.`);
+      onStopped(stopped);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function handleThemeChange(color: string) {
+    setThemeColor(color);
+    try {
+      await api.updateTheme(agent.id, color);
+      setIframeKey((k) => k + 1);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  async function handleSaveEndpoints() {
+    if (!editingEndpoints) return;
+    setSavingEndpoints(true);
+    try {
+      const updated = await api.updateAgent(agent.id, { endpoints: editingEndpoints });
+      notify("Endpoints saved — rebuilding to apply changes.");
+      setEditingEndpoints(null);
+      onRebuild(updated);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setSavingEndpoints(false);
+    }
+  }
+
+  return (
+    <div className="agent-page">
+      <button className="back-link" onClick={onBack}>
+        ← Back to agents
+      </button>
+
+      <div className="agent-page-header">
+        <div>
+          <h2>{agent.name}</h2>
+          {agent.container_port && (
+            <span className="container-info">
+              <span className="pulse-dot" /> running in container · port {agent.container_port}
+            </span>
+          )}
+        </div>
+        <div className="agent-page-actions">
+          <label className="theme-picker">
+            Theme
+            <input
+              type="color"
+              value={themeColor}
+              onChange={(e) => handleThemeChange(e.target.value)}
+            />
+          </label>
+          <button onClick={() => onRebuild(agent)}>Regenerate webpage</button>
+          {webpageUrl && (
+            <a className="btn-outline-link" href={webpageUrl} target="_blank" rel="noreferrer">
+              Open in new tab ↗
+            </a>
+          )}
+          <button onClick={handleStop} disabled={stopping}>
+            {stopping ? "Stopping…" : "Stop container"}
+          </button>
+        </div>
+      </div>
+
+      <div className="agent-page-body">
+        <div className="agent-webpage-frame">
+          {webpageUrl ? (
+            <iframe
+              key={iframeKey}
+              src={webpageUrl}
+              title={`${agent.name} interactive webpage`}
+            />
+          ) : (
+            <div className="empty-state">No running container.</div>
+          )}
+        </div>
+
+        <div className="agent-endpoints-panel">
+          <h3>API Endpoints</h3>
+          <p className="field-hint">
+            These are for programmatic access — separate from the interactive webpage above.
+          </p>
+
+          {editingEndpoints === null ? (
+            <>
+              {agent.endpoints.length === 0 ? (
+                <div className="empty-state">No custom endpoints configured yet.</div>
+              ) : (
+                <ul className="endpoint-list">
+                  {agent.endpoints.map((ep) => (
+                    <li key={ep.id} className="endpoint-item">
+                      <div className="endpoint-item-top">
+                        <span className="endpoint-method">{ep.method}</span>
+                        <span className="endpoint-path">{ep.path}</span>
+                      </div>
+                      <p className="endpoint-desc">{ep.description}</p>
+                      <pre className="option-card-example">
+                        {`curl -X ${ep.method} http://localhost:${agent.container_port}${ep.path} \\\n  -H "Content-Type: application/json" \\\n  -d '{...}'`}
+                      </pre>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button onClick={() => setEditingEndpoints(agent.endpoints)}>Manage endpoints</button>
+            </>
+          ) : (
+            <>
+              <EndpointList endpoints={editingEndpoints} onChange={setEditingEndpoints} />
+              <div className="actions">
+                <button onClick={() => setEditingEndpoints(null)} disabled={savingEndpoints}>
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={handleSaveEndpoints}
+                  disabled={savingEndpoints}
+                >
+                  {savingEndpoints ? "Saving…" : "Save & rebuild"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

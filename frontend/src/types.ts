@@ -1,0 +1,76 @@
+export interface ModelOption {
+  provider: string;
+  provider_label: string;
+  model_id: string;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
+export interface CapabilityOption {
+  key: string;
+  name: string;
+  description: string;
+  icon: string;
+  wired: boolean;
+  mcp_server: string | null;
+  requires_api_key: boolean;
+  api_key_help: string | null;
+  platform_key_available: boolean;
+}
+
+export interface EndpointSpec {
+  id: string;
+  path: string;
+  method: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  instruction: string;
+}
+
+export interface CronJobSpec {
+  id: string;
+  cron_expression: string;
+  instruction: string;
+}
+
+export interface Agent {
+  id: number;
+  name: string;
+  model_provider: string;
+  model_id: string;
+  hosting_mode: string;
+  manifesto: string | null;
+  system_prompt: string | null;
+  has_model_api_key: boolean;
+  capability_keys: string[];
+  capability_api_keys_set: string[];
+  endpoints: EndpointSpec[];
+  cron_jobs: CronJobSpec[];
+  theme_color: string;
+  status: "draft" | "deployed";
+  created_at: string;
+  deployed_at: string | null;
+  container_id: string | null;
+  container_port: number | null;
+}
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface BuildStep {
+  name: string;
+  status: "pending" | "running" | "success" | "failed";
+  detail: string | null;
+}
+
+export interface BuildJob {
+  id: string;
+  agent_id: number;
+  status: "running" | "success" | "failed";
+  steps: BuildStep[];
+}
