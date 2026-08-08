@@ -209,11 +209,13 @@ def _wait_for_port(host_port: int, timeout: float = 60.0) -> None:
 
 
 def ensure_running(mcp_server_key: str) -> str:
-    """Ensure the shared MCP server container for this key is built and
-    running, and return its MCP SSE URL — reachable by container name if
-    it's on the same Docker network as agent containers (local dev), or by
-    CAPABILITIES_HOST:published-port if it's on a separate host entirely
-    (split-VM deployment)."""
+    """Ensure the shared MCP server for this key is running and return its SSE URL.
+    In cloudrun mode, delegates to mcp_cloudrun; otherwise uses local Docker."""
+    deploy_mode = os.environ.get("DEPLOY_MODE", "local")
+    if deploy_mode == "cloudrun":
+        from app import mcp_cloudrun
+        return mcp_cloudrun.ensure_running(mcp_server_key)
+
     spec = MCP_SERVER_SPECS.get(mcp_server_key)
     if spec is None:
         raise RuntimeError(f"Unknown MCP server: {mcp_server_key!r}")
