@@ -5,6 +5,7 @@ anthropic==0.68.0
 groq==1.0.0
 python-dotenv==1.0.1
 docker==7.2.0
+paramiko==3.5.0
 httpx==0.28.1
 jsonschema==4.23.0
 croniter==3.0.4

@@ -8,6 +8,60 @@ from app import docker_manager
 
 MCP_SERVERS_DIR = Path(__file__).resolve().parent.parent / "mcp_servers"
 
+# Set only in the split-VM deployment, where capability containers run on a
+# separate host from the one running this backend (and creating per-agent
+# containers). CAPABILITIES_DOCKER_HOST is an ssh:// URL the `docker` SDK
+# connects through (e.g. "ssh://azureuser@10.0.0.5") — SSH rather than the
+# raw Docker TCP API, so the only thing that needs to be network-reachable
+# is port 22, not an unauthenticated Docker socket. CAPABILITIES_HOST is
+# just that host's address (e.g. "10.0.0.5"), used to build the URL agent
+# containers actually call at runtime — a real container-name DNS lookup
+# only resolves within one Docker daemon's own network, so once capability
+# containers live on a different daemon entirely, they have to be addressed
+# by host:published-port instead. Neither var being set (plain local dev)
+# keeps every bit of this on the exact same single-daemon path as before.
+CAPABILITIES_DOCKER_HOST = os.environ.get("CAPABILITIES_DOCKER_HOST")
+CAPABILITIES_HOST = os.environ.get("CAPABILITIES_HOST")
+
+_remote_client = None
+
+
+def _get_client():
+    """The Docker client capability containers should be created through —
+    the remote one over SSH if this deployment splits capabilities onto
+    their own host, otherwise the same local client agent containers use."""
+    global _remote_client
+    if not CAPABILITIES_DOCKER_HOST:
+        return docker_manager._get_client()
+    if _remote_client is not None:
+        return _remote_client
+    try:
+        import docker
+        from docker.errors import DockerException
+    except ImportError as exc:
+        raise RuntimeError("The `docker` package is not installed.") from exc
+    try:
+        client = docker.DockerClient(base_url=CAPABILITIES_DOCKER_HOST)
+        client.ping()
+    except DockerException as exc:
+        raise RuntimeError(
+            f"Could not reach the capabilities host at {CAPABILITIES_DOCKER_HOST!r}: {exc}"
+        ) from exc
+    _remote_client = client
+    return _remote_client
+
+
+def _ensure_network() -> Optional[str]:
+    """Only meaningful when capabilities run on the same daemon as agent
+    containers (local dev) — that's what lets them resolve each other by
+    container name. In split-VM mode there's no shared Docker network to
+    join at all (the two daemons don't share one), so this is a no-op and
+    ensure_running() addresses capability containers by CAPABILITIES_HOST
+    instead."""
+    if CAPABILITIES_DOCKER_HOST:
+        return None
+    return docker_manager.ensure_network()
+
 # Platform-provided key pools, so a keyed capability works out of the box
 # without every user having to sign up for and paste in their own key —
 # an agent's own capability_api_keys entry always takes priority when
@@ -138,11 +192,15 @@ _PACK_VOLUMES = {
 
 
 def _wait_for_port(host_port: int, timeout: float = 60.0) -> None:
+    # In split-VM mode the container we just started is on a different
+    # machine, so "is it listening" has to be checked from here, over the
+    # network, against CAPABILITIES_HOST — not "localhost".
+    probe_host = CAPABILITIES_HOST or "localhost"
     deadline = time.time() + timeout
     last_error: Optional[Exception] = None
     while time.time() < deadline:
         try:
-            with socket.create_connection(("localhost", host_port), timeout=2.0):
+            with socket.create_connection((probe_host, host_port), timeout=2.0):
                 return
         except OSError as exc:
             last_error = exc
@@ -152,13 +210,16 @@ def _wait_for_port(host_port: int, timeout: float = 60.0) -> None:
 
 def ensure_running(mcp_server_key: str) -> str:
     """Ensure the shared MCP server container for this key is built and
-    running, and return its internal (Docker-network) MCP SSE URL."""
+    running, and return its MCP SSE URL — reachable by container name if
+    it's on the same Docker network as agent containers (local dev), or by
+    CAPABILITIES_HOST:published-port if it's on a separate host entirely
+    (split-VM deployment)."""
     spec = MCP_SERVER_SPECS.get(mcp_server_key)
     if spec is None:
         raise RuntimeError(f"Unknown MCP server: {mcp_server_key!r}")
 
-    client = docker_manager._get_client()
-    network = docker_manager.ensure_network()
+    client = _get_client()
+    network = _ensure_network()
 
     from docker.errors import NotFound
 
@@ -196,4 +257,6 @@ def ensure_running(mcp_server_key: str) -> str:
     host_port = int(bindings[0]["HostPort"])
     _wait_for_port(host_port)
 
+    if CAPABILITIES_HOST:
+        return f"http://{CAPABILITIES_HOST}:{host_port}{spec['sse_path']}"
     return f"http://{spec['container_name']}:{spec['internal_port']}{spec['sse_path']}"
