@@ -84,6 +84,47 @@ MODEL_OPTIONS: list[ModelOption] = [
         description="A smaller, faster version of Groq Compound.",
         available=True,
     ),
+    # --- Featherless AI — OpenAI-compatible serverless inference, needs FEATHERLESS_API_KEY ---
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="meta-llama/Meta-Llama-3.1-70B-Instruct",
+        label="Llama 3.1 70B Instruct",
+        description="Meta's flagship open model on Featherless — strong reasoning and tool use, serverless GPU inference.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="meta-llama/Meta-Llama-3.1-8B-Instruct",
+        label="Llama 3.1 8B Instruct",
+        description="Fast and capable smaller Llama model on Featherless. Good for simple agents where speed matters.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="mistralai/Mistral-Nemo-Instruct-2407",
+        label="Mistral Nemo 12B",
+        description="Mistral's efficient mid-size model on Featherless. Good balance of speed and capability.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="Qwen/Qwen2.5-72B-Instruct",
+        label="Qwen 2.5 72B",
+        description="Alibaba's large multilingual model on Featherless. Strong at coding and multilingual tasks.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="NousResearch/Meta-Llama-3.1-70B-Instruct",
+        label="Nous Llama 3.1 70B",
+        description="Nous Research's fine-tune of Llama 3.1 70B on Featherless. Enhanced instruction following.",
+        available=True,
+    ),
     # --- OpenAI — direct API, not wired up yet ---
     ModelOption(
         provider="openai",
