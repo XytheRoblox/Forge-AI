@@ -76,6 +76,24 @@ def _get_groq():
     return _groq_client
 
 
+_featherless_client = None
+
+
+def _get_featherless():
+    global _featherless_client
+    if _featherless_client is None:
+        from openai import OpenAI
+
+        api_key = os.environ.get("FEATHERLESS_API_KEY")
+        if not api_key:
+            raise RuntimeError("FEATHERLESS_API_KEY is not set in this container.")
+        _featherless_client = OpenAI(
+            base_url="https://api.featherless.ai/v1",
+            api_key=api_key,
+        )
+    return _featherless_client
+
+
 def _load_system_prompt() -> str:
     if MANIFESTO_PATH.exists():
         text = MANIFESTO_PATH.read_text()
@@ -398,6 +416,64 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         _set_status("Writing a final answer…")
         response = _call_groq(use_tools=False)
+        return _strip_thinking(response.choices[0].message.content or "")
+
+    elif MODEL_PROVIDER == "featherless":
+        from openai import NOT_GIVEN
+
+        client = _get_featherless()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": info["description"],
+                    "parameters": info["input_schema"],
+                },
+            }
+            for name, info in _TOOL_INDEX.items()
+        ]
+        messages = [{"role": "system", "content": system_prompt}, *history]
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+            _set_status(f"Asking {MODEL_ID}…")
+            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
+            if tools:
+                kwargs["tools"] = tools
+            response = client.chat.completions.create(**kwargs)
+            message = response.choices[0].message
+
+            if not message.tool_calls:
+                _set_status("Writing a reply…")
+                return _strip_thinking(message.content or "")
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in message.tool_calls
+                    ],
+                }
+            )
+            for tool_call in message.tool_calls:
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+                _set_status(f"Using {tool_call.function.name}…")
+                result_text = _execute_tool(tool_call.function.name, arguments)
+                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+
+        _set_status("Writing a final answer…")
+        response = client.chat.completions.create(
+            model=MODEL_ID, max_tokens=2048, messages=messages
+        )
         return _strip_thinking(response.choices[0].message.content or "")
 
     elif MODEL_PROVIDER == "ollama":
