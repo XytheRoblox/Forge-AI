@@ -33,7 +33,10 @@ export function StepReview({
   const selectedCapabilities = capabilities.filter((c) => state.capability_keys.includes(c.key));
   const keyedCapabilities = selectedCapabilities.filter((c) => c.requires_api_key);
   const missingModelKey =
-    state.hosting_mode === "api" && !state.model_api_key.trim() && !agent?.has_model_api_key;
+    state.hosting_mode === "api" &&
+    state.model_provider !== "featherless" &&
+    !state.model_api_key.trim() &&
+    !agent?.has_model_api_key;
   const missingCapabilityKeys = keyedCapabilities.filter(
     (c) =>
       !(state.capability_api_keys[c.key] ?? "").trim() &&
@@ -106,7 +109,7 @@ export function StepReview({
         <textarea value={state.system_prompt} readOnly rows={8} />
       </label>
 
-      {state.hosting_mode === "api" && (
+      {state.hosting_mode === "api" && state.model_provider !== "featherless" && (
         <label className="field">
           <span>{model?.provider_label ?? "Model provider"} API key</span>
           <input

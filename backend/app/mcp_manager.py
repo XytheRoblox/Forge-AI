@@ -70,6 +70,7 @@ def _ensure_network() -> Optional[str]:
 # instead of every agent hammering a single free-tier key.
 CAPABILITY_KEY_POOL_ENV_VARS = {
     "wolfram_alpha": ["WOLFRAM_ALPHA_APP_ID", "WOLFRAM_ALPHA_APP_ID_2", "WOLFRAM_ALPHA_APP_ID_3"],
+    "firecrawl": ["FIRECRAWL_API_KEY"],
 }
 
 
@@ -95,6 +96,14 @@ MCP_SERVER_SPECS = {
         "internal_port": 8000,
         "sse_path": "/sse",
         "env_passthrough": ["WOLFRAM_ALPHA_APP_ID"],
+    },
+    "firecrawl": {
+        "build_dir": MCP_SERVERS_DIR / "firecrawl",
+        "container_name": "forge-mcp-firecrawl",
+        "image_tag": "forge-mcp-firecrawl:latest",
+        "internal_port": 8000,
+        "sse_path": "/sse",
+        "env_passthrough": ["FIRECRAWL_API_KEY"],
     },
     "playwright": {
         "build_dir": MCP_SERVERS_DIR / "playwright",

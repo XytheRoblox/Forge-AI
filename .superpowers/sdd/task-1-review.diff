@@ -1,0 +1,109 @@
+diff --git a/backend/.env.example b/backend/.env.example
+index 305fe3f..d38ef17 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -26,5 +26,10 @@ WOLFRAM_ALPHA_APP_ID_3=
+ BRAVE_API_KEY=
+ 
+ # GitHub capability (part of the dev_pack MCP container). No per-agent BYOK
+ # for this one either. Needs at least `repo` scope for most useful actions.
+ GITHUB_PERSONAL_ACCESS_TOKEN=
++
++# Featherless AI — serverless GPU inference for open-source models.
++# Each agent can supply their own key via the wizard; this is the platform fallback.
++# Sign up at featherless.ai to get an API key.
++FEATHERLESS_API_KEY=
+diff --git a/backend/app/docker_manager.py b/backend/app/docker_manager.py
+index 766e125..636556a 100644
+--- a/backend/app/docker_manager.py
++++ b/backend/app/docker_manager.py
+@@ -11,10 +11,11 @@ CONTAINER_PORT = 8080
+ NETWORK_NAME = "forge-net"
+ 
+ PROVIDER_ENV_VAR = {
+     "anthropic": "ANTHROPIC_API_KEY",
+     "groq": "GROQ_API_KEY",
++    "featherless": "FEATHERLESS_API_KEY",
+ }
+ 
+ _client = None
+ 
+ 
+diff --git a/backend/app/registry.py b/backend/app/registry.py
+index 81a6b06..3ce3035 100644
+--- a/backend/app/registry.py
++++ b/backend/app/registry.py
+@@ -82,10 +82,51 @@ MODEL_OPTIONS: list[ModelOption] = [
+         model_id="groq/compound-mini",
+         label="Groq Compound Mini",
+         description="A smaller, faster version of Groq Compound.",
+         available=True,
+     ),
++    # --- Featherless AI — OpenAI-compatible serverless inference, needs FEATHERLESS_API_KEY ---
++    ModelOption(
++        provider="featherless",
++        provider_label="Featherless AI",
++        model_id="meta-llama/Meta-Llama-3.1-70B-Instruct",
++        label="Llama 3.1 70B Instruct",
++        description="Meta's flagship open model on Featherless — strong reasoning and tool use, serverless GPU inference.",
++        available=True,
++    ),
++    ModelOption(
++        provider="featherless",
++        provider_label="Featherless AI",
++        model_id="meta-llama/Meta-Llama-3.1-8B-Instruct",
++        label="Llama 3.1 8B Instruct",
++        description="Fast and capable smaller Llama model on Featherless. Good for simple agents where speed matters.",
++        available=True,
++    ),
++    ModelOption(
++        provider="featherless",
++        provider_label="Featherless AI",
++        model_id="mistralai/Mistral-Nemo-Instruct-2407",
++        label="Mistral Nemo 12B",
++        description="Mistral's efficient mid-size model on Featherless. Good balance of speed and capability.",
++        available=True,
++    ),
++    ModelOption(
++        provider="featherless",
++        provider_label="Featherless AI",
++        model_id="Qwen/Qwen2.5-72B-Instruct",
++        label="Qwen 2.5 72B",
++        description="Alibaba's large multilingual model on Featherless. Strong at coding and multilingual tasks.",
++        available=True,
++    ),
++    ModelOption(
++        provider="featherless",
++        provider_label="Featherless AI",
++        model_id="NousResearch/Meta-Llama-3.1-70B-Instruct",
++        label="Nous Llama 3.1 70B",
++        description="Nous Research's fine-tune of Llama 3.1 70B on Featherless. Enhanced instruction following.",
++        available=True,
++    ),
+     # --- OpenAI — direct API, not wired up yet ---
+     ModelOption(
+         provider="openai",
+         provider_label="OpenAI",
+         model_id="gpt-5",
+diff --git a/backend/tests/test_featherless.py b/backend/tests/test_featherless.py
+new file mode 100644
+index 0000000..d028aa1
+--- /dev/null
++++ b/backend/tests/test_featherless.py
+@@ -0,0 +1,16 @@
++from app.registry import MODEL_OPTIONS
++from app.docker_manager import PROVIDER_ENV_VAR
++
++
++def test_featherless_models_in_registry():
++    featherless_models = [m for m in MODEL_OPTIONS if m.provider == "featherless"]
++    assert len(featherless_models) >= 5
++    for model in featherless_models:
++        assert model.available is True
++        assert model.provider_label == "Featherless AI"
++        assert "/" in model.model_id  # HuggingFace-style org/model format
++
++
++def test_featherless_in_provider_env_var():
++    assert "featherless" in PROVIDER_ENV_VAR
++    assert PROVIDER_ENV_VAR["featherless"] == "FEATHERLESS_API_KEY"

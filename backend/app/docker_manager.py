@@ -1,3 +1,4 @@
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -147,10 +148,9 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
         internal_url, _ = ollama_manager.ensure_running()
         env["OLLAMA_URL"] = internal_url
     elif agent.model_api_key:
-        # Each agent uses its own owner-supplied API key, not a key shared
-        # across every agent on this host — build validation already
-        # guarantees model_api_key is set before a hosted-API agent deploys.
         env[PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")] = agent.model_api_key
+    elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
+        env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
 
     client = _get_client()
     container = client.containers.run(

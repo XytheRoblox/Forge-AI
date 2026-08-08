@@ -73,9 +73,18 @@ def get_job(job_id: str) -> Optional[BuildJob]:
     return _JOBS.get(job_id)
 
 
+FEATHERLESS_VISION_MODELS = {
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "Qwen/Qwen2.5-VL-32B-Instruct",
+    "Qwen/Qwen2.5-VL-7B-Instruct",
+}
+
+
 def _is_vision_capable(model_provider: str, model_id: str) -> bool:
     if model_provider == "anthropic":
         return True
+    if model_provider == "featherless":
+        return model_id in FEATHERLESS_VISION_MODELS
     if model_provider == "ollama":
         return model_id == "llava"
     return False
@@ -95,10 +104,13 @@ def _validate(agent: Agent) -> Optional[str]:
             "which doesn't support image input. Pick a supported model, or remove this capability."
         )
     if agent.model_provider != "ollama" and not agent.model_api_key:
-        return (
-            f"This agent needs its own {agent.model_provider} API key before it can deploy — "
-            "add it on the Review step."
-        )
+        if agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
+            pass
+        else:
+            return (
+                f"This agent needs its own {agent.model_provider} API key before it can deploy — "
+                "add it on the Review step."
+            )
     if agent.model_provider == "ollama":
         mcp_capabilities = [
             CAPABILITY_LOOKUP[key].name

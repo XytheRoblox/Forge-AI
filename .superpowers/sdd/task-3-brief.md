@@ -1,3 +1,38 @@
+### Task 3: Add Cloud Run Manager for Agent Deployment
+
+**Files:**
+- Create: `backend/app/cloudrun_manager.py`
+- Modify: `backend/requirements.txt`
+- Create: `backend/tests/test_cloudrun_manager.py`
+
+**Interfaces:**
+- Consumes: `Agent` model from `backend/app/models.py`; `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPO` env vars
+- Produces: `deploy_agent(agent, workspace_dir) -> tuple[str, str]` (service_name, service_url), `stop_agent(agent) -> None`, `chat(agent, history) -> str`, `call_endpoint(agent, method, path, payload) -> dict`, `is_available() -> bool`
+
+- [ ] **Step 1: Add google-cloud-run to backend requirements**
+
+Change `backend/requirements.txt` to:
+
+```
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlmodel==0.0.22
+anthropic==0.68.0
+groq==1.0.0
+python-dotenv==1.0.1
+docker==7.2.0
+paramiko==3.5.0
+httpx==0.28.1
+jsonschema==4.23.0
+croniter==3.0.4
+google-cloud-run==0.10.12
+```
+
+- [ ] **Step 2: Create cloudrun_manager.py**
+
+Create `backend/app/cloudrun_manager.py`:
+
+```python
 import os
 import subprocess
 import time
@@ -79,8 +114,6 @@ def deploy_agent(agent, workspace_dir: Path) -> tuple[str, str]:
     if agent.model_api_key:
         key_name = PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")
         env_vars.append(f"{key_name}={agent.model_api_key}")
-    elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
-        env_vars.append(f"FEATHERLESS_API_KEY={os.environ['FEATHERLESS_API_KEY']}")
 
     cmd = [
         "gcloud", "run", "deploy", service_name,
@@ -201,3 +234,50 @@ def call_endpoint(agent, method: str, path: str, payload: dict) -> dict:
         return response.json()
     except ValueError as exc:
         raise RuntimeError(f"Endpoint {path} non-JSON response: {response.text[:200]}") from exc
+```
+
+- [ ] **Step 3: Write tests for cloudrun_manager**
+
+Create `backend/tests/test_cloudrun_manager.py`:
+
+```python
+import os
+from unittest.mock import patch
+
+from app.cloudrun_manager import _service_name, _image_uri, is_available
+
+
+def test_service_name_format():
+    assert _service_name(1) == "forge-agent-1"
+    assert _service_name(42) == "forge-agent-42"
+
+
+def test_image_uri_format():
+    with patch.dict(os.environ, {"GCP_PROJECT_ID": "my-project", "GCP_REGION": "us-central1", "GCP_ARTIFACT_REPO": "forge"}):
+        from importlib import reload
+        import app.cloudrun_manager as mod
+        reload(mod)
+        assert "my-project" in mod._image_uri(1)
+        assert "agent-1:latest" in mod._image_uri(1)
+
+
+def test_is_available_without_project_id():
+    with patch.dict(os.environ, {"GCP_PROJECT_ID": ""}, clear=False):
+        from importlib import reload
+        import app.cloudrun_manager as mod
+        reload(mod)
+        assert mod.is_available() is False
+```
+
+- [ ] **Step 4: Run tests**
+
+Run: `cd /Users/arvindsr/Forge/backend && pip install google-cloud-run==0.10.12 && python -m pytest tests/test_cloudrun_manager.py -v`
+Expected: PASS (3 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/cloudrun_manager.py backend/requirements.txt backend/tests/test_cloudrun_manager.py
+git commit -m "feat: add Cloud Run manager for deploying agent containers"
+```
+

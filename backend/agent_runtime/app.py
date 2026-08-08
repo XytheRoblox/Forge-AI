@@ -522,6 +522,14 @@ def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict
         ]
         return history[:-1] + [{"role": "user", "content": content}]
 
+    if MODEL_PROVIDER == "featherless":
+        text = history[-1]["content"]
+        content = [
+            {"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.data}"}},
+            {"type": "text", "text": text},
+        ]
+        return history[:-1] + [{"role": "user", "content": content}]
+
     if MODEL_PROVIDER == "ollama":
         last = {**history[-1], "images": [image.data]}
         return history[:-1] + [last]
