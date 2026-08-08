@@ -24,6 +24,8 @@ class Agent(SQLModel, table=True):
     deployed_at: Optional[datetime] = None
     container_id: Optional[str] = None
     container_port: Optional[int] = None
+    service_url: Optional[str] = None
+    cloudrun_service_name: Optional[str] = None
 
     @property
     def has_model_api_key(self) -> bool:

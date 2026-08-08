@@ -53,6 +53,8 @@ export interface Agent {
   deployed_at: string | null;
   container_id: string | null;
   container_port: number | null;
+  service_url: string | null;
+  cloudrun_service_name: string | null;
 }
 
 export interface ChatMessage {

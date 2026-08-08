@@ -18,7 +18,11 @@ export function AgentPage({ agent, onBack, onStopped, onRebuild, notify }: Props
   const [editingEndpoints, setEditingEndpoints] = useState<EndpointSpec[] | null>(null);
   const [savingEndpoints, setSavingEndpoints] = useState(false);
 
-  const webpageUrl = agent.container_port ? `http://localhost:${agent.container_port}/` : null;
+  const webpageUrl = agent.service_url
+    ? `${agent.service_url}/`
+    : agent.container_port
+      ? `http://localhost:${agent.container_port}/`
+      : null;
 
   async function handleStop() {
     setStopping(true);

@@ -1,3 +1,4 @@
+import os
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
 
+DEPLOY_MODE = os.environ.get("DEPLOY_MODE", "local")
 CAPABILITY_LOOKUP = {c.key: c for c in CAPABILITY_OPTIONS}
 
 STEP_NAMES = [
@@ -163,7 +165,7 @@ def _run(job_id: str, agent_id: int) -> None:
 
         step = job.steps[2]
         step.status = "running"
-        if agent.model_provider == "ollama":
+        if agent.model_provider == "ollama" and DEPLOY_MODE == "local":
             step.detail = f"Pulling {agent.model_id!r} (first time can take a few minutes)…"
             try:
                 ollama_manager.ensure_model_pulled(agent.model_id)
@@ -174,7 +176,7 @@ def _run(job_id: str, agent_id: int) -> None:
             step.detail = f"Model {agent.model_id!r} ready."
         else:
             step.status = "success"
-            step.detail = "Not needed for this model."
+            step.detail = "Not needed (using API-based inference)."
 
         step = job.steps[3]
         step.status = "running"
@@ -209,35 +211,62 @@ def _run(job_id: str, agent_id: int) -> None:
 
         step = job.steps[5]
         step.status = "running"
-        step.detail = "Building container image and starting it…"
-        try:
-            container_id, container_port = docker_manager.deploy(agent, workspace_dir)
-        except RuntimeError as exc:
-            _fail(job, step, str(exc))
-            return
-        step.status = "success"
-        step.detail = None
+        if DEPLOY_MODE == "cloudrun":
+            step.detail = "Deploying to Cloud Run…"
+            try:
+                from app import cloudrun_manager
+                service_name, service_url = cloudrun_manager.deploy_agent(agent, workspace_dir)
+            except RuntimeError as exc:
+                _fail(job, step, str(exc))
+                return
+            step.status = "success"
+            step.detail = f"Deployed: {service_url}"
+        else:
+            step.detail = "Building container image and starting it…"
+            try:
+                container_id, container_port = docker_manager.deploy(agent, workspace_dir)
+            except RuntimeError as exc:
+                _fail(job, step, str(exc))
+                return
+            step.status = "success"
+            step.detail = None
 
-        # docker_manager.deploy() already waited for /health internally — this
-        # step exists so the user sees it as a distinct, visible checkpoint.
+        # deploy() already waited for /health internally — this step exists so
+        # the user sees it as a distinct, visible checkpoint.
         step = job.steps[6]
         step.status = "running"
-        step.status = "success"
-        step.detail = f"Container healthy on port {container_port}"
+        if DEPLOY_MODE == "cloudrun":
+            step.status = "success"
+            step.detail = f"Service healthy at {service_url}"
+        else:
+            step.status = "success"
+            step.detail = f"Container healthy on port {container_port}"
 
         step = job.steps[7]
         step.status = "running"
         step.detail = "Sending a test message…"
-        agent.container_port = container_port
-        try:
-            reply = docker_manager.chat(
-                agent, [{"role": "user", "content": "Say hello in one short sentence."}]
-            )
-            if not reply.strip():
-                raise RuntimeError("Agent replied with empty text.")
-        except RuntimeError as exc:
-            _fail(job, step, str(exc))
-            docker_manager.stop_and_remove(agent)
+        if DEPLOY_MODE == "cloudrun":
+            agent.service_url = service_url
+            try:
+                reply = cloudrun_manager.chat(
+                    agent, [{"role": "user", "content": "Say hello in one short sentence."}]
+                )
+            except RuntimeError as exc:
+                _fail(job, step, str(exc))
+                cloudrun_manager.stop_agent(agent)
+                return
+        else:
+            agent.container_port = container_port
+            try:
+                reply = docker_manager.chat(
+                    agent, [{"role": "user", "content": "Say hello in one short sentence."}]
+                )
+            except RuntimeError as exc:
+                _fail(job, step, str(exc))
+                docker_manager.stop_and_remove(agent)
+                return
+        if not reply.strip():
+            _fail(job, step, "Agent replied with empty text.")
             return
         step.status = "success"
         step.detail = f"Reply: {reply[:80]}"
@@ -252,11 +281,17 @@ def _run(job_id: str, agent_id: int) -> None:
             try:
                 for ep in agent.endpoints:
                     payload = _sample_payload(ep["input_schema"])
-                    docker_manager.call_endpoint(agent, ep["method"], ep["path"], payload)
+                    if DEPLOY_MODE == "cloudrun":
+                        cloudrun_manager.call_endpoint(agent, ep["method"], ep["path"], payload)
+                    else:
+                        docker_manager.call_endpoint(agent, ep["method"], ep["path"], payload)
                     tested.append(ep["path"])
             except RuntimeError as exc:
                 _fail(job, step, str(exc))
-                docker_manager.stop_and_remove(agent)
+                if DEPLOY_MODE == "cloudrun":
+                    cloudrun_manager.stop_agent(agent)
+                else:
+                    docker_manager.stop_and_remove(agent)
                 return
             step.status = "success"
             step.detail = f"Tested: {', '.join(tested)}"
@@ -265,8 +300,12 @@ def _run(job_id: str, agent_id: int) -> None:
             session.delete(message)
         agent.status = "deployed"
         agent.deployed_at = datetime.utcnow()
-        agent.container_id = container_id
-        agent.container_port = container_port
+        if DEPLOY_MODE == "cloudrun":
+            agent.cloudrun_service_name = service_name
+            agent.service_url = service_url
+        else:
+            agent.container_id = container_id
+            agent.container_port = container_port
         session.add(agent)
         session.commit()
         job.status = "success"

@@ -68,6 +68,8 @@ class AgentRead(BaseModel):
     deployed_at: Optional[datetime]
     container_id: Optional[str]
     container_port: Optional[int]
+    service_url: Optional[str]
+    cloudrun_service_name: Optional[str]
 
     class Config:
         from_attributes = True
