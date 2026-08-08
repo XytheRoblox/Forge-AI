@@ -9,7 +9,7 @@ import croniter
 import jsonschema
 from sqlmodel import Session, select
 
-from app import docker_manager, mcp_manager, ollama_manager, webpage_gen, workspace
+from app import docker_manager, mcp_manager, webpage_gen, workspace
 from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
@@ -166,6 +166,7 @@ def _run(job_id: str, agent_id: int) -> None:
         step = job.steps[2]
         step.status = "running"
         if agent.model_provider == "ollama" and DEPLOY_MODE == "local":
+            from app import ollama_manager
             step.detail = f"Pulling {agent.model_id!r} (first time can take a few minutes)…"
             try:
                 ollama_manager.ensure_model_pulled(agent.model_id)
