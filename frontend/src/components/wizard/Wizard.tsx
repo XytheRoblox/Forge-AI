@@ -30,11 +30,15 @@ const STEPS = [
   { key: "review", label: "Review & Deploy" },
 ];
 
-function initialState(agent: Agent | null): WizardState {
+function initialState(agent: Agent | null, models: ModelOption[]): WizardState {
+  // Default to whatever the catalog actually offers first, rather than a
+  // hardcoded id — models come and go, and a stale default silently produces
+  // an agent pinned to a model that no longer exists.
+  const fallback = models.find((m) => m.available);
   return {
     name: agent?.name ?? "",
-    model_provider: agent?.model_provider ?? "anthropic",
-    model_id: agent?.model_id ?? "claude-sonnet-5",
+    model_provider: agent?.model_provider ?? fallback?.provider ?? "featherless",
+    model_id: agent?.model_id ?? fallback?.model_id ?? "",
     hosting_mode: agent?.hosting_mode ?? "api",
     model_api_key: "",
     capability_keys: agent?.capability_keys ?? [],
@@ -58,7 +62,7 @@ export function Wizard({
   notify,
 }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [state, setState] = useState<WizardState>(() => initialState(agent));
+  const [state, setState] = useState<WizardState>(() => initialState(agent, models));
   const [autoCreated, setAutoCreated] = useState<Agent | null>(null);
   const [expanding, setExpanding] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);

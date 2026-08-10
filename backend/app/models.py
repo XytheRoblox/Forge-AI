@@ -8,8 +8,8 @@ from sqlmodel import Field, SQLModel
 class Agent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    model_provider: str = "anthropic"
-    model_id: str = "claude-sonnet-5"
+    model_provider: str = "featherless"
+    model_id: str = "Qwen/Qwen2.5-72B-Instruct"
     hosting_mode: str = "api"  # "api" | "local" (local is a disabled stub)
     manifesto: Optional[str] = None
     system_prompt: Optional[str] = None

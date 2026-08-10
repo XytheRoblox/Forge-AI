@@ -29,148 +29,51 @@ def supports_vision(model_provider: str, model_id: str) -> bool:
 
 
 MODEL_OPTIONS: list[ModelOption] = [
-    # --- Anthropic — requires paid API key ---
-    ModelOption(
-        provider="anthropic",
-        provider_label="Anthropic",
-        model_id="claude-sonnet-5",
-        label="Claude Sonnet 5",
-        description="Anthropic's balanced flagship — strong reasoning and tool use at moderate cost. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="anthropic",
-        provider_label="Anthropic",
-        model_id="claude-opus-5",
-        label="Claude Opus 5",
-        description="Anthropic's most capable model. Best for agents that need to reason through complex, multi-step tasks. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="anthropic",
-        provider_label="Anthropic",
-        model_id="claude-haiku-4-5-20251001",
-        label="Claude Haiku 4.5",
-        description="Anthropic's fastest, cheapest model. Good for simple, high-volume agents where latency matters most. Requires your own API key.",
-        available=False,
-    ),
-    # --- Groq — requires paid API key ---
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="llama-3.3-70b-versatile",
-        label="Llama 3.3 70B Versatile",
-        description="Open-weight Llama 3.3, served on Groq's low-latency hardware. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="llama-3.1-8b-instant",
-        label="Llama 3.1 8B Instant",
-        description="A small, very fast Llama model on Groq. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="openai/gpt-oss-120b",
-        label="GPT-OSS 120B",
-        description="OpenAI's open-weight model, served on Groq. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="openai/gpt-oss-20b",
-        label="GPT-OSS 20B",
-        description="OpenAI's open-weight model, smaller size, served on Groq. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="qwen/qwen3.6-27b",
-        label="Qwen 3.6 27B",
-        description="Alibaba's open-weight Qwen model, served on Groq. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="groq/compound",
-        label="Groq Compound",
-        description="Groq's own agentic system model with built-in web search and code execution. Requires your own API key.",
-        available=False,
-    ),
-    ModelOption(
-        provider="groq",
-        provider_label="Groq",
-        model_id="groq/compound-mini",
-        label="Groq Compound Mini",
-        description="A smaller, faster version of Groq Compound. Requires your own API key.",
-        available=False,
-    ),
-    # --- Featherless AI — every model below emitted a real, structured
-    # tool_call when probed against the live API, which is what MCP
-    # capabilities require. Models that only *describe* a tool call in prose
-    # (Qwen2.5-Coder-32B, Mistral-Small-3.2, Magistral-Small, Devstral-Small),
-    # that return malformed tool arguments (Hermes-3-70B emits concatenated
-    # JSON objects), or that aren't reachable on this plan at all
-    # (Llama-3.3-70B is gated) are deliberately left out: with those, an agent
-    # would look like it had capabilities and then silently never use them. ---
+    # Every model here is served by Featherless and has been probed against
+    # the live API to confirm it emits real, structured tool calls — that's
+    # the bar for working MCP capabilities. Grouping is by who built the
+    # weights (family), not by who serves them: "Llama"/"Qwen" is what people
+    # actually shop by, and every entry would otherwise sit under one
+    # undifferentiated "Featherless AI" heading.
+    #
+    # Fine-tunes are filed under the family they were trained from, per
+    # Featherless's own model_class metadata — Hermes 4 70B is a Llama 3.1
+    # 70B derivative, Hermes 4 14B a Qwen 3 14B one.
+
+    # --- Llama ---
+    # Hermes leads the family on purpose: the wizard defaults to the first
+    # available model in this list, and Meta's own `meta-llama/*` builds are
+    # frequently capacity-exhausted on Featherless, so defaulting to one of
+    # those hands a new user a deploy failure through no fault of their own.
+    # Hermes 4 is the same Llama 3.1 70B weights served from a pool that has
+    # answered every time it's been polled.
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="meta-llama/Llama-3.1-70B-Instruct",
-        label="Llama 3.1 70B Instruct",
-        description="Meta's flagship open model — strong reasoning, coding, and tool use support.",
+        family="llama",
+        family_label="Llama",
+        model_id="NousResearch/Hermes-4-70B",
+        label="Hermes 4 70B",
+        description="Nous Research's tool-use-tuned Llama 3.1 70B — built specifically for agentic workflows and structured output.",
         available=True,
     ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
+        family="llama",
+        family_label="Llama",
         model_id="meta-llama/Llama-3.1-8B-Instruct",
         label="Llama 3.1 8B Instruct",
-        description="Fast and lightweight Llama model. Good for simple agents where speed matters.",
+        description="Fast and lightweight Llama model. Good for simple agents where speed matters. Note: Meta's own Llama builds are often at capacity on Featherless — if a deploy fails with a capacity error, try Hermes 4 instead.",
         available=True,
     ),
+
+    # --- DeepSeek ---
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-72B-Instruct",
-        label="Qwen 2.5 72B",
-        description="Most capable free model — strong reasoning, coding, and tool use. Supports all MCP capabilities.",
-        available=True,
-    ),
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-32B-Instruct",
-        label="Qwen 2.5 32B",
-        description="Large model with strong tool use and reasoning. Good balance of capability and speed.",
-        available=True,
-    ),
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-14B-Instruct",
-        label="Qwen 2.5 14B",
-        description="Mid-size model — fast responses with reliable tool use. Good for most agents.",
-        available=True,
-    ),
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-7B-Instruct",
-        label="Qwen 2.5 7B",
-        description="Fastest free model — lightweight but still supports tool calling. Best for simple agents.",
-        available=True,
-    ),
-    # --- Featherless AI — reasoning / frontier open models ---
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
+        family="deepseek",
+        family_label="DeepSeek",
         model_id="deepseek-ai/DeepSeek-V3.2",
         label="DeepSeek V3.2",
         description="DeepSeek's latest flagship — top-tier reasoning and tool use with a very large context window. Best free model for hard, multi-step agents.",
@@ -179,30 +82,20 @@ MODEL_OPTIONS: list[ModelOption] = [
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
+        family="deepseek",
+        family_label="DeepSeek",
         model_id="deepseek-ai/DeepSeek-V3.1-Terminus",
         label="DeepSeek V3.1 Terminus",
         description="Stable, heavily-tested DeepSeek release — excellent reasoning and reliable tool calling.",
         available=True,
     ),
+
+    # --- Mistral ---
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct",
-        label="Qwen 3 Coder 480B",
-        description="Qwen's largest agentic coding model — the strongest tool user in the catalog. Best for agents that chain many capability calls.",
-        available=True,
-    ),
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        model_id="Qwen/Qwen3-Coder-30B-A3B-Instruct",
-        label="Qwen 3 Coder 30B",
-        description="Mixture-of-experts coding model — strong tool use at a fraction of the 480B's cost and latency.",
-        available=True,
-    ),
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
+        family="mistral",
+        family_label="Mistral",
         model_id="mistralai/Mistral-Large-Instruct-2411",
         label="Mistral Large",
         description="Mistral's flagship open model — strong general reasoning with dependable function calling.",
@@ -211,170 +104,94 @@ MODEL_OPTIONS: list[ModelOption] = [
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
+        family="mistral",
+        family_label="Mistral",
         model_id="mistralai/Mistral-Medium-3.5-128B",
         label="Mistral Medium 3.5",
         description="Mid-size Mistral with a 128K context window — good for agents that need to hold a lot of material at once.",
         available=True,
     ),
+
+    # --- Qwen ---
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="NousResearch/Hermes-4-70B",
-        label="Hermes 4 70B",
-        description="Nous Research's tool-use-tuned Llama — built specifically for agentic workflows and structured output.",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        label="Qwen 3 Coder 480B",
+        description="Qwen's largest agentic coding model — the strongest tool user in the catalog. Best for agents that chain many capability calls.",
         available=True,
     ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="NousResearch/Hermes-4-14B",
-        label="Hermes 4 14B",
-        description="Smaller Hermes 4 — keeps the agentic tool-use tuning with faster, cheaper responses.",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        label="Qwen 3 Coder 30B",
+        description="Mixture-of-experts coding model — strong tool use at a fraction of the 480B's cost and latency.",
         available=True,
     ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen2.5-72B-Instruct",
+        label="Qwen 2.5 72B",
+        description="Most capable general-purpose Qwen — strong reasoning, coding, and tool use. Supports all MCP capabilities.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen2.5-32B-Instruct",
+        label="Qwen 2.5 32B",
+        description="Large model with strong tool use and reasoning. Good balance of capability and speed.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen2.5-14B-Instruct",
+        label="Qwen 2.5 14B",
+        description="Mid-size model — fast responses with reliable tool use. Good for most agents.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        label="Qwen 2.5 7B",
+        description="Fast lightweight model that still supports tool calling. Best for simple agents.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
         model_id="Qwen/Qwen3-4B-Instruct-2507",
         label="Qwen 3 4B",
         description="Very fast small model that still emits proper tool calls. Best when latency matters more than depth.",
         available=True,
     ),
-    # --- OpenAI — direct API, not wired up yet ---
     ModelOption(
-        provider="openai",
-        provider_label="OpenAI",
-        model_id="gpt-5",
-        label="GPT-5 — coming soon",
-        description="OpenAI's flagship model. Direct OpenAI API integration isn't wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="openai",
-        provider_label="OpenAI",
-        model_id="gpt-5-mini",
-        label="GPT-5 Mini — coming soon",
-        description="A smaller, faster GPT-5 variant. Direct OpenAI API integration isn't wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="openai",
-        provider_label="OpenAI",
-        model_id="o3",
-        label="o3 — coming soon",
-        description="OpenAI's reasoning-focused model. Direct OpenAI API integration isn't wired up yet.",
-        available=False,
-    ),
-    # --- Moonshot AI (Kimi) — not wired up yet ---
-    ModelOption(
-        provider="moonshot",
-        provider_label="Moonshot AI (Kimi)",
-        model_id="kimi-k2",
-        label="Kimi K2 — coming soon",
-        description="Moonshot AI's flagship open-weight model, strong at agentic tool use. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="moonshot",
-        provider_label="Moonshot AI (Kimi)",
-        model_id="kimi-k1.5",
-        label="Kimi K1.5 — coming soon",
-        description="Moonshot AI's multimodal reasoning model. Not wired up yet.",
-        available=False,
-    ),
-    # --- Meta (Llama) — open-weight; run via Groq above. Listed here as its
-    # own family for browsing. ---
-    ModelOption(
-        provider="meta",
-        provider_label="Meta (Llama)",
-        model_id="llama-4-maverick",
-        label="Llama 4 Maverick — coming soon",
-        description="Meta's large open-weight model. Served via a provider like Groq, or run locally — direct hosting not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="meta",
-        provider_label="Meta (Llama)",
-        model_id="llama-4-scout",
-        label="Llama 4 Scout — coming soon",
-        description="Meta's efficient open-weight model with a long context window. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="meta",
-        provider_label="Meta (Llama)",
-        model_id="llama-3.1-405b",
-        label="Llama 3.1 405B — coming soon",
-        description="Meta's largest Llama 3 model. Not wired up yet.",
-        available=False,
-    ),
-    # --- Google (Gemini) — not wired up yet ---
-    ModelOption(
-        provider="google",
-        provider_label="Google (Gemini)",
-        model_id="gemini-2.5-pro",
-        label="Gemini 2.5 Pro — coming soon",
-        description="Google's flagship multimodal model. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="google",
-        provider_label="Google (Gemini)",
-        model_id="gemini-2.5-flash",
-        label="Gemini 2.5 Flash — coming soon",
-        description="Google's fast, low-cost multimodal model. Not wired up yet.",
-        available=False,
-    ),
-    # --- Mistral AI — not wired up yet ---
-    ModelOption(
-        provider="mistral",
-        provider_label="Mistral AI",
-        model_id="mistral-large",
-        label="Mistral Large — coming soon",
-        description="Mistral's flagship model. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="mistral",
-        provider_label="Mistral AI",
-        model_id="mistral-small",
-        label="Mistral Small — coming soon",
-        description="Mistral's fast, low-cost model. Not wired up yet.",
-        available=False,
-    ),
-    # --- DeepSeek — not wired up yet ---
-    ModelOption(
-        provider="deepseek",
-        provider_label="DeepSeek",
-        model_id="deepseek-v3",
-        label="DeepSeek V3 — coming soon",
-        description="DeepSeek's general-purpose open-weight model. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="deepseek",
-        provider_label="DeepSeek",
-        model_id="deepseek-r1",
-        label="DeepSeek R1 — coming soon",
-        description="DeepSeek's reasoning-focused model. Not wired up yet.",
-        available=False,
-    ),
-    # --- xAI (Grok) — not wired up yet ---
-    ModelOption(
-        provider="xai",
-        provider_label="xAI (Grok)",
-        model_id="grok-4",
-        label="Grok 4 — coming soon",
-        description="xAI's flagship model. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="xai",
-        provider_label="xAI (Grok)",
-        model_id="grok-3-mini",
-        label="Grok 3 Mini — coming soon",
-        description="xAI's fast, low-cost model. Not wired up yet.",
-        available=False,
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="qwen",
+        family_label="Qwen",
+        model_id="NousResearch/Hermes-4-14B",
+        label="Hermes 4 14B",
+        description="Nous Research's agentic tune of Qwen 3 14B — tool-use focused, with faster and cheaper responses than the 70B.",
+        available=True,
     ),
 ]
 

@@ -5,17 +5,21 @@ interface Props extends StepProps {
   models: ModelOption[];
 }
 
-function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
+/** Groups by who built the weights (Llama, DeepSeek, Mistral, Qwen) rather
+ * than by who serves them — every model is served by the same provider, so
+ * provider groups would be one big undifferentiated list. Insertion order
+ * from the API is preserved, so the backend decides how families are ranked. */
+function groupByFamily(models: ModelOption[]): Map<string, ModelOption[]> {
   const groups = new Map<string, ModelOption[]>();
   for (const m of models) {
-    if (!groups.has(m.provider_label)) groups.set(m.provider_label, []);
-    groups.get(m.provider_label)!.push(m);
+    if (!groups.has(m.family_label)) groups.set(m.family_label, []);
+    groups.get(m.family_label)!.push(m);
   }
   return groups;
 }
 
 export function StepModel({ state, update, models }: Props) {
-  const groups = groupByProvider(models);
+  const groups = groupByFamily(models);
 
   return (
     <div className="wizard-section">
@@ -35,19 +39,19 @@ export function StepModel({ state, update, models }: Props) {
       <div className="field">
         <span>Choose a model</span>
         <div className="model-provider-groups">
-          {Array.from(groups.entries()).map(([providerLabel, groupModels]) => {
+          {Array.from(groups.entries()).map(([familyLabel, groupModels]) => {
             const hasAvailable = groupModels.some((m) => m.available);
             const containsSelected = groupModels.some(
               (m) => m.provider === state.model_provider && m.model_id === state.model_id
             );
             return (
               <details
-                key={providerLabel}
+                key={familyLabel}
                 className="collapsible model-provider-group"
                 open={hasAvailable || containsSelected}
               >
                 <summary>
-                  <span>{providerLabel}</span>
+                  <span>{familyLabel}</span>
                   <span className="model-count-badge">{groupModels.length}</span>
                 </summary>
                 <div className="option-card-grid">

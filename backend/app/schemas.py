@@ -21,8 +21,10 @@ class CronJobSpec(BaseModel):
 
 class AgentCreate(BaseModel):
     name: str
-    model_provider: str = "anthropic"
-    model_id: str = "claude-sonnet-5"
+    # Kept in sync by hand with registry.MODEL_OPTIONS — registry imports this
+    # module, so it can't be imported back here to derive the default.
+    model_provider: str = "featherless"
+    model_id: str = "Qwen/Qwen2.5-72B-Instruct"
     hosting_mode: str = "api"
     manifesto: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -113,8 +115,10 @@ class ChatResponse(BaseModel):
 
 
 class ModelOption(BaseModel):
-    provider: str
+    provider: str  # who serves it — drives which client the runtime uses
     provider_label: str
+    family: str  # who built the weights — drives how the picker groups them
+    family_label: str
     model_id: str
     label: str
     description: str

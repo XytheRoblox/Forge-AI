@@ -1,6 +1,8 @@
 export interface ModelOption {
   provider: string;
   provider_label: string;
+  family: string;
+  family_label: string;
   model_id: string;
   label: string;
   description: string;
