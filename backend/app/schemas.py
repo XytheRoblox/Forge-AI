@@ -72,6 +72,7 @@ class AgentRead(BaseModel):
     container_port: Optional[int]
     service_url: Optional[str]
     cloudrun_service_name: Optional[str]
+    connected_accounts: dict[str, str] = {}
 
     class Config:
         from_attributes = True
@@ -135,6 +136,11 @@ class CapabilityOption(BaseModel):
     requires_api_key: bool = False
     api_key_help: Optional[str] = None
     platform_key_available: bool = False
+    # Set when the capability reaches a third party's account rather than a
+    # keyed API — the wizard asks the user to authorise instead of asking for
+    # a key. One grant covers every capability sharing the provider.
+    oauth_provider: Optional[str] = None
+    oauth_scopes: list[str] = []
 
 
 class BuildStepStatus(BaseModel):

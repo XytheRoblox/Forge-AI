@@ -16,6 +16,11 @@ class Agent(SQLModel, table=True):
     model_api_key: Optional[str] = None
     capability_keys: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     capability_api_keys: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    # provider -> {refresh_token, scopes, account, connected_at}. Separate from
+    # capability_api_keys because an OAuth grant isn't per-capability: one
+    # Google authorisation covers Calendar and Sheets together, and its scopes
+    # depend on which capabilities are attached at the time.
+    oauth_grants: dict[str, dict] = Field(default_factory=dict, sa_column=Column(JSON))
     endpoints: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     cron_jobs: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     theme_color: str = "#aa3bff"
@@ -34,6 +39,16 @@ class Agent(SQLModel, table=True):
     @property
     def capability_api_keys_set(self) -> list[str]:
         return [key for key, value in self.capability_api_keys.items() if value]
+
+    @property
+    def connected_accounts(self) -> dict[str, str]:
+        """provider -> the account it's connected as, for display. Never
+        exposes the token itself."""
+        return {
+            provider: grant.get("account") or "connected"
+            for provider, grant in (self.oauth_grants or {}).items()
+            if grant.get("refresh_token")
+        }
 
 
 class Message(SQLModel, table=True):

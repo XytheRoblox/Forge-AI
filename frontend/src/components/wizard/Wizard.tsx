@@ -80,13 +80,27 @@ export function Wizard({
   // Creates or updates the underlying agent record without navigating away —
   // used to get a real agent id before calling expand-manifesto, and again
   // for the final save/deploy.
+  // The most recent record we've seen for this agent. Starts as the one
+  // passed in and is replaced on every save or refresh, so state written
+  // server-side — an OAuth grant, for instance — shows up here without
+  // remounting the wizard.
+  const currentAgent = autoCreated ?? agent;
+
   async function ensurePersisted(): Promise<Agent> {
-    const target = agent ?? autoCreated;
-    const saved = target
-      ? await api.updateAgent(target.id, state)
+    const saved = currentAgent
+      ? await api.updateAgent(currentAgent.id, state)
       : await api.createAgent(state);
-    if (!agent) setAutoCreated(saved);
+    setAutoCreated(saved);
     return saved;
+  }
+
+  async function refreshAgent() {
+    if (!currentAgent) return;
+    try {
+      setAutoCreated(await api.getAgent(currentAgent.id));
+    } catch {
+      // Non-fatal: the connect panel just keeps showing its previous state.
+    }
   }
 
   async function handleExpand() {
@@ -179,7 +193,7 @@ export function Wizard({
           state={state}
           update={update}
           capabilities={capabilities}
-          agent={agent ?? autoCreated}
+          agent={currentAgent}
         />
       );
       break;
@@ -198,13 +212,15 @@ export function Wizard({
           update={update}
           models={models}
           capabilities={capabilities}
-          agent={agent ?? autoCreated}
+          agent={currentAgent}
           onSaveDraft={handleSaveDraft}
           onDeploy={handleDeploy}
           savingDraft={savingDraft}
           deploying={deploying}
           dockerAvailable={dockerAvailable}
           error={error}
+          onAgentChanged={refreshAgent}
+          notify={notify}
         />
       );
       break;

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from app.db import init_db  # noqa: E402
-from app.routers import agents, catalog  # noqa: E402
+from app.routers import agents, catalog, oauth  # noqa: E402
 
 
 @asynccontextmanager
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(agents.router)
 app.include_router(catalog.router)
+app.include_router(oauth.router)
 
 
 @app.get("/api/health")

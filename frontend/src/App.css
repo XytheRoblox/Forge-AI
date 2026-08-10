@@ -1368,3 +1368,40 @@ textarea {
   background: var(--accent);
   color: white;
 }
+
+/* --- Google account connection (Review step) --------------------------- */
+
+.google-connect {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--code-bg);
+}
+
+/* A connected account is a settled state, not a call to action. */
+.google-connect.connected {
+  border-color: #2f9e5f;
+  background: color-mix(in srgb, #2f9e5f 10%, transparent);
+}
+
+.google-connect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.google-connect-title {
+  color: var(--text-h);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.error-hint {
+  color: #e5484d;
+}

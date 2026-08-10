@@ -273,6 +273,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         description="Check and hold dates on a calendar.",
         icon="📅",
         wired=False,
+        oauth_provider="google",
+        oauth_scopes=['https://www.googleapis.com/auth/calendar.events'],
     ),
     CapabilityOption(
         key="slack",
@@ -287,6 +289,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         description="Read, draft, and send email through Gmail.",
         icon="📧",
         wired=False,
+        oauth_provider="google",
+        oauth_scopes=['https://www.googleapis.com/auth/gmail.modify'],
     ),
     CapabilityOption(
         key="google_sheets",
@@ -294,6 +298,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         description="Read and write rows in a Google Sheet.",
         icon="📊",
         wired=False,
+        oauth_provider="google",
+        oauth_scopes=['https://www.googleapis.com/auth/spreadsheets'],
     ),
     CapabilityOption(
         key="notion",

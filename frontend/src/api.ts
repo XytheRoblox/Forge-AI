@@ -55,6 +55,12 @@ export const api = {
       body: JSON.stringify({ theme_color }),
     }),
 
+  googleOAuthStatus: () => request<{ configured: boolean; redirect_uri: string }>("/oauth/google/status"),
+  startGoogleOAuth: (agentId: number) =>
+    request<{ authorization_url: string }>(`/oauth/google/start/${agentId}`, { method: "POST" }),
+  disconnectGoogle: (agentId: number) =>
+    request<{ connected: boolean }>(`/oauth/google/${agentId}`, { method: "DELETE" }),
+
   recommendModel: (purpose: string) =>
     request<{ recommendation: ModelRecommendation | null }>("/models/recommend", {
       method: "POST",
