@@ -177,12 +177,19 @@ def _run(job_id: str, agent_id: int) -> None:
         step = job.steps[3]
         step.status = "running"
         try:
-            html = webpage_gen.generate_webpage(agent)
+            html, theme = webpage_gen.generate_webpage(agent)
             (workspace_dir / "web" / "index.html").write_text(html)
+            # The generated accent becomes the agent's accent, so the picker
+            # and the generated look are the same value rather than two that
+            # silently disagree. write_theme ran during ensure_workspace,
+            # before a theme existed, so theme.json is rewritten here.
+            agent.theme_color = theme.get("accent", agent.theme_color)
+            workspace.write_theme(agent)
         except RuntimeError as exc:
             _fail(job, step, str(exc))
             return
         step.status = "success"
+        step.detail = f"Themed: {theme.get('pattern')} pattern, {theme.get('font')} type"
 
         step = job.steps[4]
         step.status = "running"

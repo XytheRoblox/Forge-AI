@@ -351,7 +351,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                 kwargs["tools"] = tools
             return client.chat.completions.create(**kwargs)
 
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for round_index in range(MAX_TOOL_ITERATIONS):
             _set_status(f"Asking {MODEL_ID}…")
             try:
                 response = _call_groq(use_tools=True)
@@ -375,28 +375,43 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # message.model_dump() — the SDK's response schema includes
             # extra fields (e.g. "annotations") that Groq's own request
             # validation rejects on the next call.
+            # Not every model returns an id with its tool calls — Mistral
+            # Medium returns null — but the API rejects the follow-up request
+            # if the assistant message or the tool result carries a null id
+            # (422 on messages.N.tool_calls.0.id). Synthesize one in that case
+            # so the second round of the loop still goes through; the id only
+            # has to correlate a call with its result.
+            #
+            # The exact shape matters: Mistral additionally requires ids to be
+            # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
+            # 0-9, with a length of 9"), so this pads to precisely that rather
+            # than using a readable "call_1".
+            call_ids = [
+                tc.id or f"c{round_index:02d}{position:02d}0000"
+                for position, tc in enumerate(message.tool_calls)
+            ]
             messages.append(
                 {
                     "role": "assistant",
                     "content": message.content,
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": call_id,
                             "type": "function",
                             "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                         }
-                        for tc in message.tool_calls
+                        for call_id, tc in zip(call_ids, message.tool_calls)
                     ],
                 }
             )
-            for tool_call in message.tool_calls:
+            for call_id, tool_call in zip(call_ids, message.tool_calls):
                 try:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
                 _set_status(f"Using {tool_call.function.name}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
-                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
         _set_status("Writing a final answer…")
         response = _call_groq(use_tools=False)
@@ -419,7 +434,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
         ]
         messages = [{"role": "system", "content": system_prompt}, *history]
 
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for round_index in range(MAX_TOOL_ITERATIONS):
             _set_status(f"Asking {MODEL_ID}…")
             kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
             if tools:
@@ -431,28 +446,43 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                 _set_status("Writing a reply…")
                 return _strip_thinking(message.content or "")
 
+            # Not every model returns an id with its tool calls — Mistral
+            # Medium returns null — but the API rejects the follow-up request
+            # if the assistant message or the tool result carries a null id
+            # (422 on messages.N.tool_calls.0.id). Synthesize one in that case
+            # so the second round of the loop still goes through; the id only
+            # has to correlate a call with its result.
+            #
+            # The exact shape matters: Mistral additionally requires ids to be
+            # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
+            # 0-9, with a length of 9"), so this pads to precisely that rather
+            # than using a readable "call_1".
+            call_ids = [
+                tc.id or f"c{round_index:02d}{position:02d}0000"
+                for position, tc in enumerate(message.tool_calls)
+            ]
             messages.append(
                 {
                     "role": "assistant",
                     "content": message.content,
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": call_id,
                             "type": "function",
                             "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                         }
-                        for tc in message.tool_calls
+                        for call_id, tc in zip(call_ids, message.tool_calls)
                     ],
                 }
             )
-            for tool_call in message.tool_calls:
+            for call_id, tool_call in zip(call_ids, message.tool_calls):
                 try:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
                 _set_status(f"Using {tool_call.function.name}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
-                messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": result_text})
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
         _set_status("Writing a final answer…")
         response = client.chat.completions.create(

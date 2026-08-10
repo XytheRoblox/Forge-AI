@@ -39,6 +39,9 @@ export const api = {
   getBuildStatus: (id: number, jobId: string) =>
     request<BuildJob>(`/agents/${id}/build/${jobId}`),
   stopAgent: (id: number) => request<Agent>(`/agents/${id}/stop`, { method: "POST" }),
+  restartAgent: (id: number) => request<Agent>(`/agents/${id}/restart`, { method: "POST" }),
+  regenerateWebpage: (id: number) =>
+    request<Agent>(`/agents/${id}/regenerate-webpage`, { method: "POST" }),
   updateTheme: (id: number, theme_color: string) =>
     request<Agent>(`/agents/${id}/theme`, {
       method: "PATCH",

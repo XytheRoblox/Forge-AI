@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app import build_pipeline, docker_manager, llm_client, workspace
+from app import build_pipeline, docker_manager, llm_client, webpage_gen, workspace
 from app.db import get_session
 from app.models import Agent, Message
 from app.schemas import (
@@ -129,6 +129,52 @@ def stop_agent(agent_id: int, session: Session = Depends(get_session)):
     session.add(agent)
     session.commit()
     session.refresh(agent)
+    return agent
+
+
+@router.post("/{agent_id}/restart", response_model=AgentRead)
+def restart_agent(agent_id: int, session: Session = Depends(get_session)):
+    """Restart the agent's existing container in place.
+
+    Distinct from stop (which tears the container down and drops the agent
+    back to draft) and from build (which re-runs the whole pipeline): this
+    keeps the same container and the same workspace, so it's the cheap way to
+    recover a wedged agent. The published port changes on restart, so the
+    stored port is refreshed from Docker afterwards."""
+    agent = _get_agent_or_404(agent_id, session)
+    if agent.status != "deployed":
+        raise HTTPException(status_code=400, detail="Agent isn't running — deploy it first.")
+    try:
+        port = docker_manager.restart(agent)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    agent.container_port = port
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+@router.post("/{agent_id}/regenerate-webpage", response_model=AgentRead)
+def regenerate_webpage(agent_id: int, session: Session = Depends(get_session)):
+    """Rebuild ONLY the agent's chat page, with a freshly generated theme.
+
+    The page lives in the workspace directory that's bind-mounted into the
+    container and is re-read from disk on every request, so rewriting the file
+    is enough — no image rebuild, no container restart, and the agent keeps
+    running and keeps its memory."""
+    agent = _get_agent_or_404(agent_id, session)
+    workspace_path = workspace.workspace_dir(agent.id)
+    try:
+        html, theme = webpage_gen.generate_webpage(agent)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    (workspace_path / "web" / "index.html").write_text(html)
+    agent.theme_color = theme.get("accent", agent.theme_color)
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    workspace.write_theme(agent)
     return agent
 
 

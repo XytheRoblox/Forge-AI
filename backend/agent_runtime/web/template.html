@@ -222,6 +222,13 @@
   }
   #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
+<!-- Agent-specific generated theme. Emitted last so it overrides the base
+     variables above, and deliberately limited to :root variables, body
+     font/background and a fixed set of decorative patterns — the layout and
+     chat behaviour above can't be reached from here. -->
+<style>
+  __AGENT_THEME_CSS__
+</style>
 </head>
 <body data-image-upload="__IMAGE_UPLOAD_ENABLED__">
   <header>

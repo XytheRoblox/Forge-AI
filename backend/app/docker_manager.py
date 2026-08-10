@@ -176,6 +176,26 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     return container.id, host_port
 
 
+def restart(agent) -> int:
+    """Restart this agent's existing container and return its new host port.
+
+    Docker assigns a fresh ephemeral host port on restart, so the caller has
+    to persist the returned port — reusing the old one silently talks to
+    nothing."""
+    from docker.errors import NotFound
+
+    client = _get_client()
+    ref = agent.container_id or _container_name(agent.id)
+    try:
+        container = client.containers.get(ref)
+    except NotFound:
+        raise RuntimeError("This agent has no container to restart — deploy it again.")
+    container.restart(timeout=10)
+    host_port = _wait_for_host_port(container)
+    _wait_for_health(host_port)
+    return host_port
+
+
 def chat(agent, history: list[dict], image: Optional[dict] = None) -> str:
     if not agent.container_port:
         raise RuntimeError("Agent has no running container. Deploy it again.")

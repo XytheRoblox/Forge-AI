@@ -12,7 +12,8 @@ interface Props {
 }
 
 export function AgentPage({ agent, onBack, onStopped, onRebuild, notify }: Props) {
-  const [stopping, setStopping] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [themeColor, setThemeColor] = useState(agent.theme_color);
   const [iframeKey, setIframeKey] = useState(0);
   const [editingEndpoints, setEditingEndpoints] = useState<EndpointSpec[] | null>(null);
@@ -24,16 +25,34 @@ export function AgentPage({ agent, onBack, onStopped, onRebuild, notify }: Props
       ? `http://localhost:${agent.container_port}/`
       : null;
 
-  async function handleStop() {
-    setStopping(true);
+  async function handleRestart() {
+    setRestarting(true);
     try {
-      const stopped = await api.stopAgent(agent.id);
-      notify(`"${agent.name}"'s container was stopped.`);
-      onStopped(stopped);
+      const restarted = await api.restartAgent(agent.id);
+      notify(`"${agent.name}" restarted.`);
+      // The host port changes on restart, so the iframe has to be remounted
+      // against the new URL or it keeps pointing at a dead port.
+      onStopped(restarted);
+      setIframeKey((k) => k + 1);
     } catch (e) {
       notify((e as Error).message, "error");
     } finally {
-      setStopping(false);
+      setRestarting(false);
+    }
+  }
+
+  async function handleRegenerateWebpage() {
+    setRegenerating(true);
+    try {
+      const updated = await api.regenerateWebpage(agent.id);
+      setThemeColor(updated.theme_color);
+      notify("Webpage regenerated with a new theme.");
+      onStopped(updated);
+      setIframeKey((k) => k + 1);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -86,14 +105,16 @@ export function AgentPage({ agent, onBack, onStopped, onRebuild, notify }: Props
               onChange={(e) => handleThemeChange(e.target.value)}
             />
           </label>
-          <button onClick={() => onRebuild(agent)}>Regenerate webpage</button>
+          <button onClick={handleRegenerateWebpage} disabled={regenerating}>
+            {regenerating ? "Regenerating…" : "Regenerate webpage"}
+          </button>
           {webpageUrl && (
             <a className="btn-outline-link" href={webpageUrl} target="_blank" rel="noreferrer">
               Open in new tab ↗
             </a>
           )}
-          <button onClick={handleStop} disabled={stopping}>
-            {stopping ? "Stopping…" : "Stop container"}
+          <button onClick={handleRestart} disabled={restarting}>
+            {restarting ? "Restarting…" : "Restart agent"}
           </button>
         </div>
       </div>
