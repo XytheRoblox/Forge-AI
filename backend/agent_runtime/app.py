@@ -203,6 +203,15 @@ MAX_TOOL_RESULT_TO_MODEL = 8000
 # degradation.
 MAX_PROMPT_CHARS = int(os.environ.get("MAX_PROMPT_CHARS", "88000"))
 
+# Interim narration is only worth showing when the final message can't stand
+# on its own. Keeping it unconditionally was worse than the problem it fixed:
+# a model that says "Let me try a different approach:" before each of six tool
+# calls produced six such fragments stitched together, with the actual results
+# invisible between them. Below this length the final message reads as a stub
+# — "Final answer: 67.2 m" — and the working is worth restoring; above it, the
+# model has already written its own answer and the fragments are noise.
+STUB_REPLY_CHARS = 220
+
 # What an older tool result is squeezed to when the prompt has to shrink. The
 # most recent results are what the model is actively reasoning about; earlier
 # ones usually only need to be remembered in outline.
@@ -259,7 +268,21 @@ wrongly. In particular, be careful with a system that is momentarily at rest: ze
 does not mean zero acceleration, and it does not mean the forces balance.
 
 If a tool's answer contradicts your own reasoning, don't just adopt it. Work out which is
-wrong and say so."""
+wrong and say so.
+
+## When a tool fails
+Say so plainly, name the tool, quote what it reported, and say what the user can do about it —
+a permission error usually means the connected account needs reconnecting with more access.
+Then stop.
+
+Do not paper over a failure. If you were asked to work with the user's real data and couldn't
+reach it, substituting a generic explanation of the topic is not a partial answer; it looks
+like you succeeded while quietly answering a different question. One or two sentences naming
+the problem beats a page of material nobody asked for.
+
+Retry a failed call only if you are changing something specific about it. Trying the same
+call again, or trying three other tools in the hope one works, wastes the user's time and
+buries the actual error."""
 
 
 PLANNING_INSTRUCTIONS = """
@@ -292,7 +315,11 @@ working through a multi-step problem.
 Use it: build on values you have already computed or fetched instead of recalculating them, \
 and do not repeat an identical call with identical arguments when its result is here already. \
 Treat an entry as stale if the user has since changed the inputs, or if it could have changed \
-on its own (a time, a price, a live page) — re-run the call in that case."""
+on its own (a time, a price, a live page) — re-run the call in that case.
+
+Only successful calls are recorded here. A call missing from this log may simply have failed \
+earlier; that is not a reason to avoid trying it now, since whatever blocked it may have been \
+fixed since."""
 
 
 def _load_tool_log() -> str:
@@ -751,8 +778,10 @@ def _execute_tool(name: str, arguments: dict) -> str:
             result = _run_builtin_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
             result = f"Error running tool {name!r}: {exc}"
-        _record_tool_use(name, ok=not result.startswith("Error"), arguments=arguments, result=result)
-        _log_tool_call(name, arguments, result)
+        builtin_ok = not result.startswith("Error")
+        _record_tool_use(name, ok=builtin_ok, arguments=arguments, result=result)
+        if builtin_ok:
+            _log_tool_call(name, arguments, result)
         return result
     call_args = dict(arguments)
     if info.get("api_key_param") and info.get("api_key"):
@@ -769,7 +798,14 @@ def _execute_tool(name: str, arguments: dict) -> str:
     # retrying it unchanged. The API key is deliberately taken from
     # `arguments`, not `call_args`, so an injected secret never lands on disk.
     _record_tool_use(name, ok=ok, arguments=arguments, result=result)
-    _log_tool_call(name, arguments, result)
+    # Only successes are persisted. A failure is still visible to the model
+    # for the rest of THIS turn (it's in the conversation), which is what stops
+    # a retry loop — but writing it to the durable log made a transient or
+    # since-fixed failure permanent guidance, so an agent that hit a
+    # permission error once would keep skipping that capability long after the
+    # permission was granted.
+    if ok:
+        _log_tool_call(name, arguments, result)
     return result
 
 
@@ -783,6 +819,16 @@ _TOOL_SCAFFOLD = re.compile(
     r"</?\s*(tool_call|tool_response|function_call|function_results?)\s*>", re.IGNORECASE
 )
 
+# A whole XML tool-call block written as prose. Models fall back to this when
+# they want another call but the loop has stopped offering tools — the answer
+# then arrives as markup the user is left to interpret. Removed entirely
+# rather than unwrapped: a call the runtime never executed has no result, so
+# showing its arguments would only imply something happened.
+_TOOL_CALL_BLOCK = re.compile(
+    r"<\s*(function_calls|invoke|antml:invoke|parameter)\b[\s\S]*?(?:</\s*\1\s*>|$)",
+    re.IGNORECASE,
+)
+
 
 def _strip_thinking(text: str) -> str:
     """Model output with its scaffolding removed.
@@ -792,6 +838,7 @@ def _strip_thinking(text: str) -> str:
     separate `reasoning` field, and others leave tool-call markers behind.
     Neither belongs in a user-visible reply."""
     text = _THINK_BLOCK.sub("", text)
+    text = _TOOL_CALL_BLOCK.sub("", text)
     text = _TOOL_SCAFFOLD.sub("", text)
     return text.strip()
 
@@ -849,7 +896,9 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             if not message.tool_calls:
                 _set_status("Writing a reply…")
                 final = _strip_thinking(message.content or "")
-                return "\n\n".join([*narration, final]) if narration else final
+                if narration and len(final) < STUB_REPLY_CHARS:
+                    return "\n\n".join([*narration, final])
+                return final
 
             # Build a minimal, request-safe assistant message rather than
             # message.model_dump() — the SDK's response schema includes
@@ -947,7 +996,9 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             if not message.tool_calls:
                 _set_status("Writing a reply…")
                 final = _strip_thinking(message.content or "")
-                return "\n\n".join([*narration, final]) if narration else final
+                if narration and len(final) < STUB_REPLY_CHARS:
+                    return "\n\n".join([*narration, final])
+                return final
 
             # Not every model returns an id with its tool calls — Mistral
             # Medium returns null — but the API rejects the follow-up request

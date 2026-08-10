@@ -198,6 +198,21 @@ if "google_classroom" in ENABLED:
                 f"{due['year']}-{due['month']:02d}-{due['day']:02d}" if due else "no due date"
             )
             lines.append(f"- {item.get('title')} (due {when}) [id: {item.get('id')}]")
+            if item.get("description"):
+                lines.append(f"    {item['description'][:300]}")
+            # The assignment itself is usually an ATTACHMENT, not the title.
+            # Listing only titles told an agent an assignment existed while
+            # hiding the document it was actually being asked to work through.
+            for material in item.get("materials", []):
+                if "driveFile" in material:
+                    f = material["driveFile"]["driveFile"]
+                    lines.append(f"    attachment: {f.get('title')} [file_id: {f.get('id')}]")
+                elif "link" in material:
+                    lines.append(f"    link: {material['link'].get('url')}")
+                elif "youtubeVideo" in material:
+                    lines.append(f"    video: {material['youtubeVideo'].get('title')}")
+                elif "form" in material:
+                    lines.append(f"    form: {material['form'].get('formUrl')}")
         return "\n".join(lines)
 
 
@@ -281,6 +296,71 @@ if "google_drive" in ENABLED:
         if not files:
             return "No matching files this agent has access to."
         return "\n".join(f"- {f['name']} [{f['id']}] {f.get('webViewLink', '')}" for f in files)
+
+
+if "google_drive" in ENABLED:
+
+    @mcp.tool()
+    def read_drive_file(file_id: str, max_chars: int = 12000) -> str:
+        """Read the text of a Drive file — a Google Doc, or a PDF attachment
+        such as one attached to a Classroom assignment.
+
+        Use the file_id reported by list_coursework or find_drive_files."""
+        meta = _call(
+            "GET",
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            params={"fields": "id,name,mimeType"},
+        )
+        mime = meta.get("mimeType", "")
+        name = meta.get("name", file_id)
+
+        if mime.startswith("application/vnd.google-apps."):
+            # Native Google formats have no bytes to download; they're exported.
+            export = "text/plain" if "document" in mime else "text/csv"
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
+            resp = httpx.get(
+                url,
+                params={"mimeType": export},
+                headers={"Authorization": f"Bearer {_access_token()}"},
+                timeout=60.0,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Could not export '{name}': {resp.text[:150]}")
+            text = resp.text
+        else:
+            resp = httpx.get(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                params={"alt": "media"},
+                headers={"Authorization": f"Bearer {_access_token()}"},
+                timeout=60.0,
+                follow_redirects=True,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Could not download '{name}': {resp.text[:150]}")
+            if mime == "application/pdf" or name.lower().endswith(".pdf"):
+                try:
+                    import io
+
+                    from pypdf import PdfReader
+
+                    reader = PdfReader(io.BytesIO(resp.content))
+                    text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+                except Exception as exc:  # noqa: BLE001 - report, don't crash the turn
+                    raise RuntimeError(f"Could not read the PDF '{name}': {exc}")
+            else:
+                try:
+                    text = resp.content.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise RuntimeError(
+                        f"'{name}' is a {mime} file, which this agent can't read as text."
+                    )
+
+        text = text.strip()
+        if not text:
+            return f"'{name}' opened but contained no extractable text (it may be scanned images)."
+        if len(text) > max_chars:
+            return f"{name} (first {max_chars} characters):\n\n{text[:max_chars]}"
+        return f"{name}:\n\n{text}"
 
 
 if __name__ == "__main__":
