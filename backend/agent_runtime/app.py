@@ -265,8 +265,17 @@ class ChatRequest(BaseModel):
     image: ChatImage | None = None
 
 
+class ToolUse(BaseModel):
+    name: str
+    ok: bool
+
+
 class ChatResponse(BaseModel):
     reply: str
+    # Which tools this particular turn used, in call order, so the page can
+    # show its work. Empty when the model answered without reaching for
+    # anything.
+    tools: list[ToolUse] = []
 
 
 # What the agent is actually doing right now, mid-reply — polled by the
@@ -281,6 +290,27 @@ _current_status = "idle"
 def _set_status(text: str) -> None:
     global _current_status
     _current_status = text
+
+
+# FastAPI runs these sync endpoints in a threadpool, so concurrent chats are
+# concurrent THREADS. A module-level list would interleave one conversation's
+# tool calls into another's reply; thread-local state keeps each turn's record
+# to itself.
+_turn = threading.local()
+
+
+def _begin_turn() -> None:
+    _turn.tools = []
+
+
+def _record_tool_use(name: str, ok: bool) -> None:
+    calls = getattr(_turn, "tools", None)
+    if calls is not None:
+        calls.append({"name": _pretty_tool(name), "ok": ok})
+
+
+def _turn_tools() -> list[dict]:
+    return list(getattr(_turn, "tools", []) or [])
 
 
 def _pretty_tool(name: str) -> str:
@@ -454,24 +484,31 @@ async def _on_startup() -> None:
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
+        _record_tool_use(name, ok=False)
         return f"Error: unknown tool {name!r}"
     if info.get("builtin"):
         try:
-            return _run_builtin_tool(name, arguments)
+            result = _run_builtin_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
-            return f"Error running tool {name!r}: {exc}"
+            result = f"Error running tool {name!r}: {exc}"
+        _record_tool_use(name, ok=not result.startswith("Error"))
+        _log_tool_call(name, arguments, result)
+        return result
     call_args = dict(arguments)
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:
         result = asyncio.run(_async_call_tool(info["mcp_url"], name, call_args))
+        ok = True
     except Exception as exc:  # noqa: BLE001 - surface the failure to the model, not a 500
         result = f"Error calling tool {name!r}: {exc}"
-    # Logged from here rather than from each provider's loop so every path —
-    # chat, custom endpoints, cron — records calls the same way. Failures are
-    # logged too: knowing a call already failed is what stops the model
-    # retrying it identically. The API key is deliberately logged from
+        ok = False
+    # Recorded and logged from here rather than from each provider's loop so
+    # every path — chat, custom endpoints, cron — behaves identically. Failures
+    # are logged too: knowing a call already failed is what stops the model
+    # retrying it unchanged. The API key is deliberately taken from
     # `arguments`, not `call_args`, so an injected secret never lands on disk.
+    _record_tool_use(name, ok=ok)
     _log_tool_call(name, arguments, result)
     return result
 
@@ -734,6 +771,7 @@ def chat(payload: ChatRequest):
     if payload.image:
         history = _attach_image_to_history(history, payload.image)
     _set_status("Reading your message…")
+    _begin_turn()
     try:
         try:
             reply = _generate_reply(_effective_system_prompt(), history)
@@ -746,7 +784,7 @@ def chat(payload: ChatRequest):
             raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
     finally:
         _set_status("idle")
-    return ChatResponse(reply=reply)
+    return ChatResponse(reply=reply, tools=[ToolUse(**t) for t in _turn_tools()])
 
 
 class CacheUpdateRequest(BaseModel):

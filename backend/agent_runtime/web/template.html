@@ -109,17 +109,75 @@
   .msg .frac-den {
     padding: 0 3px;
   }
-  /* KaTeX sets its own colour; inherit the bubble's instead so math doesn't
-     go black on a dark theme. Display math gets its own scroller — a long
-     equation must never widen the page. */
-  .msg .katex { color: inherit; font-size: 1.05em; }
-  .msg .katex-display {
-    margin: 6px 0;
+  /* MathJax renders to SVG. currentColor makes the glyphs take the bubble's
+     colour instead of defaulting to black on a dark theme. */
+  .msg mjx-container svg { color: inherit; fill: currentColor; }
+  .msg mjx-container { color: inherit; }
+  .msg .math { white-space: normal; }
+  /* MathJax emits a parallel MathML copy for screen readers. It relies on
+     being clipped out of view, which this bubble's `white-space: pre-wrap`
+     defeats — the result is every equation rendered twice, once as SVG and
+     once as raw text. Clip it explicitly rather than turning the feature off,
+     so assistive tech still reads the maths. */
+  .msg mjx-assistive-mml {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    clip: rect(1px, 1px, 1px, 1px);
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    display: block !important;
+  }
+  /* Display maths gets its own scroller — a long equation must never widen
+     the page. */
+  .msg .math-display {
+    display: block;
+    margin: 8px 0;
     overflow-x: auto;
     overflow-y: hidden;
-    padding-bottom: 2px;
+    text-align: center;
   }
-  .msg .math { white-space: normal; }
+
+  /* Footer listing the tools a reply used. */
+  .msg-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    white-space: normal;
+  }
+  .msg-tools-label {
+    color: var(--text);
+    opacity: 0.75;
+    letter-spacing: 0.03em;
+  }
+  .tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-bg);
+    color: var(--text-h);
+    border: 1px solid var(--border);
+  }
+  .tool-chip::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .tool-chip.failed { opacity: 0.75; }
+  .tool-chip.failed::before { background: #d2504a; }
   .msg.typing {
     gap: 6px;
   }
@@ -250,22 +308,43 @@
 <style>
   __AGENT_THEME_CSS__
 </style>
-<!-- Real math typesetting. Loaded from a CDN rather than vendored into the
-     agent image: the alternative is shipping KaTeX's fonts in every agent
-     container, and the page already can't do anything useful without network.
-     Both tags are optional by design — if they fail to load, renderRichText's
-     own macro substitution still runs, so math degrades to approximate rather
-     than raw source. -->
-<link
-  rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
-  crossorigin="anonymous"
-/>
+<!-- Full TeX, via MathJax. KaTeX was here first and is faster, but it
+     implements a SUBSET of LaTeX — it rejects the AMS environments a maths
+     agent reaches for constantly (align, cases, matrices), \newcommand, and
+     much of amsmath. MathJax's TeX input handles those, which is the whole
+     point of putting maths on the page.
+
+     Loaded from a CDN rather than vendored into every agent image, and
+     entirely optional: if it fails to load, renderRichText's own macro
+     substitution still runs, so maths degrades to approximate rather than to
+     raw source. -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+      processEscapes: true,
+      // The AMS packages are the reason for choosing MathJax over KaTeX.
+      packages: { "[+]": ["ams", "newcommand", "noerrors", "noundefined"] },
+    },
+    // The page renders maths itself, span by span, from stashed source — a
+    // global typeset pass would also rewrite user text that merely looks like
+    // maths.
+    startup: {
+      typeset: false,
+      ready: () => {
+        window.MathJax.startup.defaultReady();
+        document.dispatchEvent(new Event("mathjax-ready"));
+      },
+    },
+    options: { enableMenu: false },
+  };
+</script>
 <script
   defer
-  src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+  id="MathJax-script"
+  src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"
   crossorigin="anonymous"
-  onload="document.dispatchEvent(new Event('katex-ready'))"
 ></script>
 </head>
 <body data-image-upload="__IMAGE_UPLOAD_ENABLED__">
@@ -385,26 +464,37 @@
     }
 
     function typesetMath(root) {
+      const ready = window.MathJax && window.MathJax.tex2svgPromise;
       root.querySelectorAll("span.math").forEach((el) => {
         const tex = el.dataset.tex || "";
         const display = el.dataset.display === "1";
-        if (window.katex) {
-          try {
-            window.katex.render(tex, el, { displayMode: display, throwOnError: false });
-            return;
-          } catch (e) {
-            // fall through to the approximate renderer
-          }
+        if (ready) {
+          // tex2svgPromise renders one expression from source, which is what
+          // this page needs — the alternative, typesetting the whole subtree,
+          // would also reinterpret ordinary prose that happens to contain $.
+          window.MathJax.tex2svgPromise(tex, { display })
+            .then((node) => {
+              el.textContent = "";
+              el.appendChild(node);
+              el.classList.toggle("math-display", display);
+            })
+            .catch(() => {
+              el.innerHTML = approximateMath(escapeHtml(tex));
+            });
+          return;
         }
         el.innerHTML = approximateMath(escapeHtml(tex));
       });
     }
 
-    // KaTeX is deferred, so early messages render approximate first; re-typeset
-    // everything once it lands. data-tex keeps the source, so this is idempotent.
-    document.addEventListener("katex-ready", () => typesetMath(document));
+    // MathJax is deferred, so early messages render approximate first;
+    // re-typeset once it lands. data-tex keeps the source, so this is idempotent.
+    document.addEventListener("mathjax-ready", () => typesetMath(document));
 
-    function appendMessage(role, content, imageDataUrl) {
+    // `tools` is the list this turn actually used, newest reply only. Omitted
+    // entirely when the model answered without calling anything — a permanent
+    // "Tools used: none" row would be noise on most messages.
+    function appendMessage(role, content, imageDataUrl, tools) {
       const div = document.createElement("div");
       div.className = "msg " + role;
       if (imageDataUrl) {
@@ -416,6 +506,24 @@
       text.innerHTML = renderRichText(content);
       typesetMath(text);
       div.appendChild(text);
+
+      if (tools && tools.length) {
+        const footer = document.createElement("div");
+        footer.className = "msg-tools";
+        const label = document.createElement("span");
+        label.className = "msg-tools-label";
+        label.textContent = tools.length === 1 ? "Used" : "Used " + tools.length + " tools:";
+        footer.appendChild(label);
+        tools.forEach((t) => {
+          const chip = document.createElement("span");
+          chip.className = "tool-chip" + (t.ok === false ? " failed" : "");
+          chip.textContent = t.name;
+          if (t.ok === false) chip.title = "This call failed";
+          footer.appendChild(chip);
+        });
+        div.appendChild(footer);
+      }
+
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
@@ -504,7 +612,7 @@
         stopStatusPolling();
         typingBubble.remove();
         if (!response.ok) throw new Error(data.detail || "Request failed");
-        appendMessage("assistant", data.reply);
+        appendMessage("assistant", data.reply, null, data.tools);
         history.push({ role: "assistant", content: data.reply });
       } catch (err) {
         stopStatusPolling();
