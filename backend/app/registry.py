@@ -207,8 +207,8 @@ MODEL_OPTIONS: list[ModelOption] = [
         description="Moonshot AI's multimodal reasoning model. Not wired up yet.",
         available=False,
     ),
-    # --- Meta (Llama) — open-weight; run via Groq above, or locally via
-    # Ollama below. Listed here as its own family for browsing. ---
+    # --- Meta (Llama) — open-weight; run via Groq above. Listed here as its
+    # own family for browsing. ---
     ModelOption(
         provider="meta",
         provider_label="Meta (Llama)",
@@ -299,39 +299,6 @@ MODEL_OPTIONS: list[ModelOption] = [
         model_id="grok-3-mini",
         label="Grok 3 Mini — coming soon",
         description="xAI's fast, low-cost model. Not wired up yet.",
-        available=False,
-    ),
-    # --- Ollama (Local) — runs on your own hardware, no API key or network
-    # call required. Hosting mode is a disabled stub until this is wired up. ---
-    ModelOption(
-        provider="ollama",
-        provider_label="Ollama (Local)",
-        model_id="llama3.3",
-        label="Llama 3.3 — coming soon",
-        description="Run Meta's Llama 3.3 entirely on your own hardware, no external API calls. Not wired up yet.",
-        available=False,
-    ),
-    ModelOption(
-        provider="ollama",
-        provider_label="Ollama (Local)",
-        model_id="qwen2.5:3b",
-        label="Qwen 2.5 (3B)",
-        description=(
-            "Runs entirely on this machine via a shared Ollama container — no API key, no data "
-            "leaves your machine. Smaller and less capable than the hosted models, and doesn't "
-            "support tool use (capabilities) yet. First deploy pulls a ~2GB model file."
-        ),
-        available=False,
-    ),
-    ModelOption(
-        provider="ollama",
-        provider_label="Ollama (Local)",
-        model_id="llava",
-        label="LLaVA (vision, 7B)",
-        description=(
-            "A local vision-capable model — runs entirely on this machine, no API key. Supports "
-            "the Image Recognition capability. First deploy pulls a ~4.7GB model file."
-        ),
         available=False,
     ),
 ]

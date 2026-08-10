@@ -39,7 +39,6 @@ CAPABILITY_KEY_PARAM = {"wolfram_alpha": "app_id"}
 
 MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "anthropic")
 MODEL_ID = os.environ.get("MODEL_ID", "claude-sonnet-5")
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://forge-ollama:11434")
 
 SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
@@ -476,41 +475,17 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
         )
         return _strip_thinking(response.choices[0].message.content or "")
 
-    elif MODEL_PROVIDER == "ollama":
-        # No tool-use loop here: function-calling support varies a lot across
-        # Ollama models and isn't reliable enough yet to build the same
-        # multi-round loop the API providers get — this is a real, working
-        # basic chat path, just without capabilities attached.
-        messages = [{"role": "system", "content": system_prompt}, *history]
-        _set_status(
-            f"Running {MODEL_ID} locally — first reply after a while can take a minute or two…"
-        )
-        try:
-            response = httpx.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={"model": MODEL_ID, "messages": messages, "stream": False},
-                # Generous enough to cover a cold-start model load into RAM on
-                # CPU-only hardware; kept below docker_manager's own 180s
-                # timeout so this raises first with a specific message.
-                timeout=170.0,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Could not reach the local Ollama model: {exc}") from exc
-        _set_status("Writing a reply…")
-        return _strip_thinking(response.json()["message"]["content"].strip())
-
     raise RuntimeError(f"Unsupported model provider: {MODEL_PROVIDER}")
 
 
 def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict]:
     """Attaches an uploaded image to the last (newest) user message, in
     whichever shape the current provider expects — Anthropic wants a
-    multi-part content list with an embedded base64 image block, Ollama
-    wants a separate top-level `images` array of base64 strings on the
-    message itself. Build validation only allows Image Recognition on a
-    vision-capable model/provider combination, so any other provider here
-    just gets the image silently dropped."""
+    multi-part content list with an embedded base64 image block, Featherless
+    wants an OpenAI-style `image_url` part with a data URI. Build validation
+    only allows Image Recognition on a vision-capable model/provider
+    combination, so any other provider here just gets the image silently
+    dropped."""
     if not history or history[-1].get("role") != "user":
         return history
 
@@ -529,10 +504,6 @@ def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict
             {"type": "text", "text": text},
         ]
         return history[:-1] + [{"role": "user", "content": content}]
-
-    if MODEL_PROVIDER == "ollama":
-        last = {**history[-1], "images": [image.data]}
-        return history[:-1] + [last]
 
     return history
 

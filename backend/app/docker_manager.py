@@ -139,15 +139,7 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
         "MODEL_PROVIDER": agent.model_provider,
         "MODEL_ID": agent.model_id,
     }
-    if agent.model_provider == "ollama":
-        # No API key needed — instead, point at the shared Ollama container
-        # (already running by the time this runs; the build pipeline's
-        # "Prepare local model" step started it and pulled the model).
-        from app import ollama_manager
-
-        internal_url, _ = ollama_manager.ensure_running()
-        env["OLLAMA_URL"] = internal_url
-    elif agent.model_api_key:
+    if agent.model_api_key:
         env[PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")] = agent.model_api_key
     elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
         env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
@@ -181,10 +173,9 @@ def chat(agent, history: list[dict]) -> str:
         response = httpx.post(
             f"http://localhost:{agent.container_port}/chat",
             json={"history": history},
-            # Local Ollama models can take well over a minute to load into RAM
-            # on the first request after a deploy (cold-start on CPU-only
-            # hardware) — generous enough to cover that without penalizing
-            # hosted-API agents, which typically reply in a few seconds anyway.
+            # Generous enough to cover a slow first request against a hosted
+            # provider (cold client setup, a long multi-tool turn) — normal
+            # replies come back in a few seconds anyway.
             timeout=180.0,
         )
         response.raise_for_status()

@@ -24,15 +24,16 @@ echo "==> Ensuring shared Docker network '$NETWORK_NAME'"
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME" >/dev/null
 
 # Keep these tags/paths in sync with the Python source of truth:
-# backend/app/docker_manager.py (IMAGE_TAG), backend/app/mcp_manager.py
-# (MCP_SERVER_SPECS), backend/app/ollama_manager.py (IMAGE) — if one of
-# those changes, mirror it here too.
+# backend/app/docker_manager.py (IMAGE_TAG) and backend/app/mcp_manager.py
+# (MCP_SERVER_SPECS) — if one of those changes, mirror it here too.
 echo "==> Building agent runtime image"
 docker build -t zovo-agent-runtime:latest "$ROOT_DIR/backend/agent_runtime"
 
 echo "==> Building capability images"
 echo "  - wolfram_alpha"
 docker build -t forge-mcp-wolfram-alpha:latest "$MCP_DIR/wolframalpha"
+echo "  - firecrawl (web search & scrape)"
+docker build -t forge-mcp-firecrawl:latest "$MCP_DIR/firecrawl"
 echo "  - playwright (browser_use)"
 docker build -t forge-mcp-playwright:latest "$MCP_DIR/playwright"
 echo "  - research_pack (fetch, time, sequential_thinking, web_search)"
@@ -40,8 +41,5 @@ docker build -t forge-mcp-research-pack:latest "$MCP_DIR/research_pack"
 echo "  - dev_pack (filesystem, github)"
 docker build -t forge-mcp-dev-pack:latest "$MCP_DIR/dev_pack"
 
-echo "==> Pulling local-model image (Ollama) — only needed if you deploy an agent with an Ollama model"
-docker pull ollama/ollama:latest >/dev/null
-
 echo "==> All local images ready:"
-docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^(zovo-agent-runtime:|forge-mcp-|ollama/ollama:)" | sort -u | sed 's/^/  /'
+docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "^(zovo-agent-runtime:|forge-mcp-)" | sort -u | sed 's/^/  /'

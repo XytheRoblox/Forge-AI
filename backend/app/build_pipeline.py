@@ -20,7 +20,6 @@ CAPABILITY_LOOKUP = {c.key: c for c in CAPABILITY_OPTIONS}
 STEP_NAMES = [
     "Validate configuration",
     "Write agent files",
-    "Prepare local model",
     "Start capability servers",
     "Generate interactive webpage",
     "Start container",
@@ -85,8 +84,6 @@ def _is_vision_capable(model_provider: str, model_id: str) -> bool:
         return True
     if model_provider == "featherless":
         return model_id in FEATHERLESS_VISION_MODELS
-    if model_provider == "ollama":
-        return model_id == "llava"
     return False
 
 
@@ -100,27 +97,17 @@ def _validate(agent: Agent) -> Optional[str]:
     ):
         return (
             "Image Recognition requires a vision-capable model (any Anthropic Claude model, or "
-            f"the local LLaVA model) — this agent uses {agent.model_provider}/{agent.model_id}, "
-            "which doesn't support image input. Pick a supported model, or remove this capability."
+            f"a vision-capable Featherless model) — this agent uses "
+            f"{agent.model_provider}/{agent.model_id}, which doesn't support image input. "
+            "Pick a supported model, or remove this capability."
         )
-    if agent.model_provider != "ollama" and not agent.model_api_key:
+    if not agent.model_api_key:
         if agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
             pass
         else:
             return (
                 f"This agent needs its own {agent.model_provider} API key before it can deploy — "
                 "add it on the Review step."
-            )
-    if agent.model_provider == "ollama":
-        mcp_capabilities = [
-            CAPABILITY_LOOKUP[key].name
-            for key in agent.capability_keys
-            if CAPABILITY_LOOKUP.get(key) and CAPABILITY_LOOKUP[key].mcp_server
-        ]
-        if mcp_capabilities:
-            return (
-                f"Local Ollama models don't support tool use yet, so {', '.join(mcp_capabilities)} "
-                "would never actually run — remove it, or pick a hosted model instead."
             )
     for key in agent.capability_keys:
         capability = CAPABILITY_LOOKUP.get(key)
@@ -177,22 +164,6 @@ def _run(job_id: str, agent_id: int) -> None:
 
         step = job.steps[2]
         step.status = "running"
-        if agent.model_provider == "ollama" and DEPLOY_MODE == "local":
-            from app import ollama_manager
-            step.detail = f"Pulling {agent.model_id!r} (first time can take a few minutes)…"
-            try:
-                ollama_manager.ensure_model_pulled(agent.model_id)
-            except RuntimeError as exc:
-                _fail(job, step, str(exc))
-                return
-            step.status = "success"
-            step.detail = f"Model {agent.model_id!r} ready."
-        else:
-            step.status = "success"
-            step.detail = "Not needed (using API-based inference)."
-
-        step = job.steps[3]
-        step.status = "running"
         capability_urls: dict[str, str] = {}
         try:
             for key in agent.capability_keys:
@@ -212,7 +183,7 @@ def _run(job_id: str, agent_id: int) -> None:
         step.status = "success"
         step.detail = f"Started: {', '.join(capability_urls)}" if capability_urls else "None needed."
 
-        step = job.steps[4]
+        step = job.steps[3]
         step.status = "running"
         try:
             html = webpage_gen.generate_webpage(agent)
@@ -222,7 +193,7 @@ def _run(job_id: str, agent_id: int) -> None:
             return
         step.status = "success"
 
-        step = job.steps[5]
+        step = job.steps[4]
         step.status = "running"
         if DEPLOY_MODE == "cloudrun":
             step.detail = "Deploying to Cloud Run…"
@@ -246,7 +217,7 @@ def _run(job_id: str, agent_id: int) -> None:
 
         # deploy() already waited for /health internally — this step exists so
         # the user sees it as a distinct, visible checkpoint.
-        step = job.steps[6]
+        step = job.steps[5]
         step.status = "running"
         if DEPLOY_MODE == "cloudrun":
             step.status = "success"
@@ -255,7 +226,7 @@ def _run(job_id: str, agent_id: int) -> None:
             step.status = "success"
             step.detail = f"Container healthy on port {container_port}"
 
-        step = job.steps[7]
+        step = job.steps[6]
         step.status = "running"
         step.detail = "Sending a test message…"
         if DEPLOY_MODE == "cloudrun":
@@ -284,7 +255,7 @@ def _run(job_id: str, agent_id: int) -> None:
         step.status = "success"
         step.detail = f"Reply: {reply[:80]}"
 
-        step = job.steps[8]
+        step = job.steps[7]
         step.status = "running"
         if not agent.endpoints:
             step.status = "success"

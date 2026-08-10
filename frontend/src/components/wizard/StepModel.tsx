@@ -64,7 +64,7 @@ export function StepModel({ state, update, models }: Props) {
                           update({
                             model_provider: m.provider,
                             model_id: m.model_id,
-                            hosting_mode: m.provider === "ollama" ? "local" : "api",
+                            hosting_mode: "api",
                           })
                         }
                       >
