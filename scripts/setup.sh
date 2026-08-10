@@ -61,6 +61,7 @@ cat <<'EOF'
 
   Backend:  cd backend && .venv/bin/uvicorn app.main:app --port 8000
   Frontend: cd frontend && npm run dev
+  Tests:    cd backend && .venv/bin/python -m pytest tests
 
 Before deploying any agent, fill in real keys in backend/.env — at minimum
 GROQ_API_KEY (manifesto expansion always runs on Groq). Everything else in

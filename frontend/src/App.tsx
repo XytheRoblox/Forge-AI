@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Header } from "./components/Header";
-import { ToastStack, useToasts } from "./components/Toasts";
+import { ToastStack } from "./components/Toasts";
+import { useToasts } from "./components/useToasts";
 import { Wizard } from "./components/wizard/Wizard";
 import { AgentPage } from "./pages/AgentPage";
 import { BuildingPage } from "./pages/BuildingPage";

@@ -8,3 +8,8 @@ paramiko>=3.5.0
 httpx>=0.28.1
 jsonschema>=4.23.0
 croniter>=3.0.4
+
+# Tests. Present in requirements rather than a separate dev file so a fresh
+# `scripts/setup.sh` produces an environment that can actually run them —
+# backend/tests existed but pytest was never installed by any documented step.
+pytest>=8.0.0

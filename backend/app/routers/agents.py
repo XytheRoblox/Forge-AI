@@ -1,7 +1,9 @@
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app import build_pipeline, docker_manager, llm_client, webpage_gen, workspace
+from app import build_pipeline, cloudrun_manager, docker_manager, llm_client, webpage_gen, workspace
 from app.db import get_session
 from app.models import Agent, Message
 from app.schemas import (
@@ -21,6 +23,14 @@ from app.schemas import (
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
+def _cloudrun() -> bool:
+    """Whether agents run as Cloud Run services rather than local containers.
+
+    Read per call rather than captured at import so the process doesn't have to
+    restart for a DEPLOY_MODE change to take effect."""
+    return os.environ.get("DEPLOY_MODE", "local") == "cloudrun"
+
+
 def _get_agent_or_404(agent_id: int, session: Session) -> Agent:
     agent = session.get(Agent, agent_id)
     if agent is None:
@@ -38,8 +48,12 @@ def _reconcile_container(agent, session: Session) -> None:
     through this app at all — Docker Desktop restarting, a reboot, a manual
     `docker restart`. Reconciling on read keeps the record honest, and demotes
     an agent whose container has genuinely gone away to draft so the UI stops
-    offering a dead link."""
-    if agent.status != "deployed":
+    offering a dead link.
+
+    Local Docker only: a Cloud Run service keeps one stable URL and publishes
+    no ephemeral port, so this would find no container and wrongly demote a
+    perfectly healthy agent."""
+    if agent.status != "deployed" or _cloudrun():
         return
     port = docker_manager.live_port(agent)
     if port == agent.container_port:
@@ -101,7 +115,10 @@ def update_agent(agent_id: int, payload: AgentUpdate, session: Session = Depends
 @router.delete("/{agent_id}", status_code=204)
 def delete_agent(agent_id: int, session: Session = Depends(get_session)):
     agent = _get_agent_or_404(agent_id, session)
-    docker_manager.stop_and_remove(agent)
+    if _cloudrun():
+        cloudrun_manager.stop_agent(agent)
+    else:
+        docker_manager.stop_and_remove(agent)
     workspace.remove_workspace(agent_id)
     for message in session.exec(select(Message).where(Message.agent_id == agent_id)).all():
         session.delete(message)
@@ -154,7 +171,10 @@ def update_theme(agent_id: int, payload: ThemeUpdate, session: Session = Depends
 @router.post("/{agent_id}/stop", response_model=AgentRead)
 def stop_agent(agent_id: int, session: Session = Depends(get_session)):
     agent = _get_agent_or_404(agent_id, session)
-    docker_manager.stop_and_remove(agent)
+    if _cloudrun():
+        cloudrun_manager.stop_agent(agent)
+    else:
+        docker_manager.stop_and_remove(agent)
     agent.status = "draft"
     agent.container_id = None
     agent.container_port = None
@@ -176,6 +196,11 @@ def restart_agent(agent_id: int, session: Session = Depends(get_session)):
     agent = _get_agent_or_404(agent_id, session)
     if agent.status != "deployed":
         raise HTTPException(status_code=400, detail="Agent isn't running — deploy it first.")
+    if _cloudrun():
+        raise HTTPException(
+            status_code=400,
+            detail="Cloud Run services restart themselves — redeploy this agent instead.",
+        )
     try:
         port = docker_manager.restart(agent)
     except RuntimeError as exc:
@@ -244,9 +269,14 @@ def chat_with_agent(agent_id: int, payload: ChatRequest, session: Session = Depe
     history.append({"role": "user", "content": payload.message or "What is in this image?"})
 
     try:
-        reply_text = docker_manager.chat(
-            agent, history, image=payload.image.model_dump() if payload.image else None
-        )
+        if _cloudrun():
+            # cloudrun_manager.chat has no image parameter — images are a
+            # local-runtime feature until the Cloud Run path is exercised.
+            reply_text = cloudrun_manager.chat(agent, history)
+        else:
+            reply_text = docker_manager.chat(
+                agent, history, image=payload.image.model_dump() if payload.image else None
+            )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
