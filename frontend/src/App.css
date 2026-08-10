@@ -1323,3 +1323,48 @@ textarea {
   background: #e5484d;
   color: white;
 }
+
+/* --- Model recommendation (Model step) --------------------------------- */
+
+/* Sits above the picker rather than inside it: it's advice about the whole
+   list, not one more option in it. */
+.model-recommendation {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-bg);
+}
+
+.model-recommendation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.model-recommendation-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.model-recommendation-body strong {
+  color: var(--text-h);
+  font-size: 15px;
+}
+
+.model-recommendation-why {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.tag-recommended {
+  background: var(--accent);
+  color: white;
+}

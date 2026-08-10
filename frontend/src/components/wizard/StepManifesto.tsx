@@ -9,6 +9,19 @@ export function StepManifesto({ state, update, onExpand, expanding }: Props) {
   return (
     <div className="wizard-section">
       <label className="field">
+        <span>Agent name</span>
+        <input
+          value={state.name}
+          onChange={(e) => update({ name: e.target.value })}
+          placeholder="Trip Concierge"
+          autoFocus
+        />
+        <span className="field-hint">
+          A label for your own reference — it doesn't affect how the agent behaves.
+        </span>
+      </label>
+
+      <label className="field">
         <span>Manifesto</span>
         <span className="field-hint">
           Describe what this agent should do in a sentence or two. An LLM call turns this into a

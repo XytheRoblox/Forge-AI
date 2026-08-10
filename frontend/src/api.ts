@@ -1,4 +1,11 @@
-import type { Agent, BuildJob, CapabilityOption, ChatMessage, ModelOption } from "./types";
+import type {
+  Agent,
+  BuildJob,
+  CapabilityOption,
+  ChatMessage,
+  ModelOption,
+  ModelRecommendation,
+} from "./types";
 
 const BASE_URL = "http://localhost:8000/api";
 
@@ -46,6 +53,12 @@ export const api = {
     request<Agent>(`/agents/${id}/theme`, {
       method: "PATCH",
       body: JSON.stringify({ theme_color }),
+    }),
+
+  recommendModel: (purpose: string) =>
+    request<{ recommendation: ModelRecommendation | null }>("/models/recommend", {
+      method: "POST",
+      body: JSON.stringify({ purpose }),
     }),
 
   getMessages: (id: number) => request<ChatMessage[]>(`/agents/${id}/messages`),

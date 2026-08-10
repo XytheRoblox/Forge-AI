@@ -56,6 +56,25 @@ Respond with ONLY the system prompt text, no preamble or explanation."""
 MANIFESTO_EXPANSION_MODEL = "llama-3.3-70b-versatile"
 
 
+RECOMMEND_MODEL = "llama-3.3-70b-versatile"
+
+RECOMMEND_PROMPT = """Pick the best model for an AI agent with this purpose:
+---
+{purpose}
+---
+
+The available models, one per line as `id — description`:
+{catalog}
+
+Choose based on what the purpose actually demands. Reasoning-heavy work (maths, physics,
+analysis, planning, multi-step tool use) needs a strong model even though it costs latency.
+Simple, high-volume, or latency-sensitive work is better served by a small fast one. Coding
+agents suit the coder models.
+
+Respond with ONLY a JSON object, no markdown fence:
+{{"model_id": "<exact id copied from the list above>", "reason": "<one sentence, under 20 words, addressed to the user>"}}"""
+
+
 THEME_MODEL = "llama-3.3-70b-versatile"
 
 THEME_PROMPT = """You are designing the visual theme for a single-purpose AI agent's chat page.
@@ -265,6 +284,50 @@ def theme_css(theme: dict) -> str:
     background-size: {size};
     background-attachment: fixed;
   }}"""
+
+
+def recommend_model(purpose: str, options: list) -> Optional[dict]:
+    """Suggest a model for this agent's stated purpose.
+
+    `options` is the live catalog, so the suggestion can only ever be a model
+    that's actually on offer — the returned id is checked against it rather
+    than trusted, since a model inventing a plausible-looking id would put the
+    wizard into a state the user can't act on. Returns None when there's
+    nothing useful to say, which the caller shows as "no recommendation"
+    rather than a wrong one."""
+    import json
+
+    available = [o for o in options if o.available]
+    if not available:
+        return None
+    catalog = "\n".join(f"{o.model_id} — {o.label}: {o.description}" for o in available)
+    try:
+        client = _get_groq()
+        response = client.chat.completions.create(
+            model=RECOMMEND_MODEL,
+            max_tokens=300,
+            messages=[
+                {"role": "user", "content": RECOMMEND_PROMPT.format(purpose=purpose, catalog=catalog)}
+            ],
+        )
+        text = _strip_thinking(response.choices[0].message.content or "")
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            return None
+        parsed = json.loads(text[start : end + 1])
+    except Exception:  # noqa: BLE001 - a missing suggestion is not an error
+        return None
+
+    chosen = next((o for o in available if o.model_id == parsed.get("model_id")), None)
+    if chosen is None:
+        return None
+    reason = str(parsed.get("reason") or "").strip()
+    return {
+        "model_id": chosen.model_id,
+        "provider": chosen.provider,
+        "label": chosen.label,
+        "reason": reason[:160],
+    }
 
 
 def expand_manifesto(manifesto: str) -> str:

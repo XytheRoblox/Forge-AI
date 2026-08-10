@@ -1,8 +1,12 @@
-import type { ModelOption } from "../../types";
+import { useEffect, useState } from "react";
+import { api } from "../../api";
+import type { ModelOption, ModelRecommendation } from "../../types";
 import type { StepProps } from "./types";
 
 interface Props extends StepProps {
   models: ModelOption[];
+  /** What the agent is for, taken from the Purpose step. Empty if skipped. */
+  purpose: string;
 }
 
 /** Groups by who built the weights (Llama, DeepSeek, Mistral, Qwen) rather
@@ -18,23 +22,70 @@ function groupByFamily(models: ModelOption[]): Map<string, ModelOption[]> {
   return groups;
 }
 
-export function StepModel({ state, update, models }: Props) {
+export function StepModel({ state, update, models, purpose }: Props) {
   const groups = groupByFamily(models);
+  const [tip, setTip] = useState<ModelRecommendation | null>(null);
+  const [loadingTip, setLoadingTip] = useState(false);
+
+  // Asked once per purpose. A failure is silent by design — the suggestion is
+  // a convenience, and a broken one shouldn't sit in the way of the picker.
+  useEffect(() => {
+    if (!purpose) {
+      setTip(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTip(true);
+    api
+      .recommendModel(purpose)
+      .then((r) => {
+        if (!cancelled) setTip(r.recommendation);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoadingTip(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [purpose]);
+
+  const tipApplied =
+    tip !== null && state.model_provider === tip.provider && state.model_id === tip.model_id;
 
   return (
     <div className="wizard-section">
-      <label className="field">
-        <span>Agent name</span>
-        <input
-          value={state.name}
-          onChange={(e) => update({ name: e.target.value })}
-          placeholder="Trip Concierge"
-          autoFocus
-        />
-        <span className="field-hint">
-          This is just a label for your own reference — it doesn't affect how the agent behaves.
-        </span>
-      </label>
+      {purpose && (loadingTip || tip) && (
+        <div className="model-recommendation">
+          {loadingTip ? (
+            <span className="field-hint">Looking at what this agent is for…</span>
+          ) : (
+            tip && (
+              <>
+                <div className="model-recommendation-body">
+                  <span className="model-recommendation-label">Recommended</span>
+                  <strong>{tip.label}</strong>
+                  {tip.reason && <span className="model-recommendation-why">{tip.reason}</span>}
+                </div>
+                <button
+                  type="button"
+                  className={tipApplied ? "" : "btn-primary"}
+                  disabled={tipApplied}
+                  onClick={() =>
+                    update({
+                      model_provider: tip.provider,
+                      model_id: tip.model_id,
+                      hosting_mode: "api",
+                    })
+                  }
+                >
+                  {tipApplied ? "Selected" : "Use this"}
+                </button>
+              </>
+            )
+          )}
+        </div>
+      )}
 
       <div className="field">
         <span>Choose a model</span>
@@ -74,6 +125,9 @@ export function StepModel({ state, update, models }: Props) {
                       >
                         <div className="option-card-top">
                           <span className="option-card-title">{m.label}</span>
+                          {tip && tip.model_id === m.model_id && (
+                            <span className="tag tag-recommended">recommended</span>
+                          )}
                         </div>
                         <p className="option-card-desc">{m.description}</p>
                       </button>

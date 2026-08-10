@@ -9,6 +9,13 @@ export interface ModelOption {
   available: boolean;
 }
 
+export interface ModelRecommendation {
+  model_id: string;
+  provider: string;
+  label: string;
+  reason: string;
+}
+
 export interface CapabilityOption {
   key: string;
   name: string;

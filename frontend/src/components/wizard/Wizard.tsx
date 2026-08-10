@@ -21,11 +21,15 @@ interface Props {
   notify: (message: string, kind?: "success" | "error") => void;
 }
 
+// Purpose comes first so the model step can recommend one for the job the
+// agent is actually being built to do. Picking a model before saying what the
+// agent is for is a guess — and the wrong guess is invisible until the agent
+// answers something badly.
 const STEPS = [
+  { key: "manifesto", label: "Purpose" },
   { key: "model", label: "Model" },
-  { key: "hosting", label: "Hosting" },
   { key: "capabilities", label: "Capabilities" },
-  { key: "manifesto", label: "Manifesto" },
+  { key: "hosting", label: "Hosting" },
   { key: "endpoint", label: "Endpoints" },
   { key: "review", label: "Review & Deploy" },
 ];
@@ -134,6 +138,8 @@ export function Wizard({
     }
   }
 
+  // The name lives on the first step (Purpose) and is the one hard requirement
+  // before moving on.
   const canGoNext = stepIndex !== 0 || state.name.trim().length > 0;
   const isReview = stepIndex === STEPS.length - 1;
 
@@ -155,7 +161,14 @@ export function Wizard({
   let stepContent;
   switch (STEPS[stepIndex].key) {
     case "model":
-      stepContent = <StepModel state={state} update={update} models={models} />;
+      stepContent = (
+        <StepModel
+          state={state}
+          update={update}
+          models={models}
+          purpose={state.manifesto.trim() || state.system_prompt.trim()}
+        />
+      );
       break;
     case "hosting":
       stepContent = <StepHosting state={state} update={update} />;
@@ -198,10 +211,10 @@ export function Wizard({
   }
 
   const subtitles: Record<string, string> = {
-    model: "Give your agent a name and pick the model that powers it.",
+    model: "Pick the model that powers it — we'll suggest one based on the purpose you wrote.",
     hosting: "Choose where this agent actually runs.",
     capabilities: "Attach the tools this agent is allowed to use.",
-    manifesto: "Tell the agent what it's for — in your words, or the model's.",
+    manifesto: "Name your agent and say what it's for. Everything after this builds on it.",
     endpoint: "Optionally add API endpoints for developers integrating this agent into their own code.",
     review: "Double-check everything, then save it or take it live.",
   };
