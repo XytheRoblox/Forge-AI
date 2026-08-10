@@ -176,6 +176,38 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     return container.id, host_port
 
 
+def live_port(agent) -> Optional[int]:
+    """The host port this agent's container is published on right now, or None
+    if it has no running container.
+
+    Docker hands out a fresh ephemeral port every time a container starts, so
+    a stored port goes stale on any restart — including ones this app didn't
+    perform (a Docker Desktop restart, a machine reboot, `docker restart`).
+    Reading it back from Docker is the only way to be sure the URL handed to a
+    browser actually points at something."""
+    if not is_available():
+        return None
+    from docker.errors import NotFound
+
+    client = _get_client()
+    ref = agent.container_id or _container_name(agent.id)
+    try:
+        container = client.containers.get(ref)
+    except NotFound:
+        return None
+    if container.status != "running":
+        return None
+    container.reload()
+    bindings = (
+        container.attrs.get("NetworkSettings", {})
+        .get("Ports", {})
+        .get(f"{CONTAINER_PORT}/tcp")
+    )
+    if not bindings:
+        return None
+    return int(bindings[0]["HostPort"])
+
+
 def restart(agent) -> int:
     """Restart this agent's existing container and return its new host port.
 

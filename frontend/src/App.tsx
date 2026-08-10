@@ -47,6 +47,12 @@ function App() {
   function handleOpen(agent: Agent) {
     if (agent.status === "deployed") {
       setView({ name: "agent", agentId: agent.id });
+      // The agent page builds its iframe URL from container_port, and Docker
+      // reassigns that port on every container start. Whatever was fetched
+      // when this list last loaded may already be stale, which renders as a
+      // "connection refused" page instead of the agent — so re-read the
+      // record (the backend reconciles it against Docker) on the way in.
+      refreshAgents().catch(() => undefined);
     } else {
       setView({ name: "wizard", agentId: agent.id });
     }

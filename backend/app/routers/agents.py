@@ -28,6 +28,33 @@ def _get_agent_or_404(agent_id: int, session: Session) -> Agent:
     return agent
 
 
+def _reconcile_container(agent, session: Session) -> None:
+    """Bring a deployed agent's stored container port back in line with Docker.
+
+    The frontend builds the agent's webpage URL straight from container_port,
+    so a stale port shows up as a flat "connection refused" in the browser
+    with the container sitting there healthy on a different port. Docker
+    reassigns that port on every start, and plenty of restarts don't go
+    through this app at all — Docker Desktop restarting, a reboot, a manual
+    `docker restart`. Reconciling on read keeps the record honest, and demotes
+    an agent whose container has genuinely gone away to draft so the UI stops
+    offering a dead link."""
+    if agent.status != "deployed":
+        return
+    port = docker_manager.live_port(agent)
+    if port == agent.container_port:
+        return
+    if port is None:
+        agent.status = "draft"
+        agent.container_id = None
+        agent.container_port = None
+    else:
+        agent.container_port = port
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+
+
 @router.post("", response_model=AgentRead)
 def create_agent(payload: AgentCreate, session: Session = Depends(get_session)):
     agent = Agent(**payload.model_dump())
@@ -39,12 +66,17 @@ def create_agent(payload: AgentCreate, session: Session = Depends(get_session)):
 
 @router.get("", response_model=list[AgentRead])
 def list_agents(session: Session = Depends(get_session)):
-    return session.exec(select(Agent).order_by(Agent.created_at.desc())).all()
+    agents = session.exec(select(Agent).order_by(Agent.created_at.desc())).all()
+    for agent in agents:
+        _reconcile_container(agent, session)
+    return agents
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
 def get_agent(agent_id: int, session: Session = Depends(get_session)):
-    return _get_agent_or_404(agent_id, session)
+    agent = _get_agent_or_404(agent_id, session)
+    _reconcile_container(agent, session)
+    return agent
 
 
 @router.patch("/{agent_id}", response_model=AgentRead)

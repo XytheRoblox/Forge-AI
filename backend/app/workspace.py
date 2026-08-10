@@ -8,6 +8,7 @@ SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
 
 MEMORY_SECTION_HEADER = "## Memory"
+TOOL_LOG_SECTION_HEADER = "## Tool Call Log"
 
 
 def workspace_dir(agent_id: int) -> Path:
@@ -42,12 +43,17 @@ def write_cache_if_missing(agent) -> None:
     path = workspace_dir(agent.id) / "CACHE.md"
     if path.exists():
         return
-    # Only the Memory section exists. A "## Tool Response Cache" section used
-    # to be written here too, but nothing ever read or wrote it — it was dead
-    # scaffolding that made every agent look like it had a working tool cache.
+    # Memory is long-term and survives everything; the tool call log is
+    # working memory for multi-step tasks, written by the runtime after every
+    # tool call and trimmed to the most recent handful. (An earlier "## Tool
+    # Response Cache" section lived here that nothing ever read or wrote —
+    # this replaces it with one the runtime actually uses.)
     content = f"""# Cache
 
 {MEMORY_SECTION_HEADER}
+(empty)
+
+{TOOL_LOG_SECTION_HEADER}
 (empty)
 """
     path.write_text(content)

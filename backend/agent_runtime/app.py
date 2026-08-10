@@ -78,6 +78,7 @@ VISION_SIDECAR_PROMPT = (
 SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
 MEMORY_HEADER = "## Memory\n"
+TOOL_LOG_HEADER = "## Tool Call Log\n"
 NEXT_SECTION_HEADER = "\n## "
 
 app = FastAPI(title="Forge Agent Runtime")
@@ -127,23 +128,57 @@ def _load_system_prompt() -> str:
     return os.environ.get("SYSTEM_PROMPT", "You are a helpful AI agent.")
 
 
-def _load_memory() -> str:
+def _read_section(header: str) -> str:
+    """The body of one `## ` section of CACHE.md, or "" if absent/empty."""
     if not CACHE_PATH.exists():
         return ""
     text = CACHE_PATH.read_text()
-    start = text.find(MEMORY_HEADER)
+    start = text.find(header)
     if start == -1:
         return ""
-    start += len(MEMORY_HEADER)
+    start += len(header)
     end = text.find(NEXT_SECTION_HEADER, start)
-    memory = text[start:end if end != -1 else None].strip()
-    return "" if memory == "(empty)" else memory
+    body = text[start : end if end != -1 else None].strip()
+    return "" if body == "(empty)" else body
+
+
+def _append_to_section(header: str, entry: str, limit: int) -> None:
+    """Append one line to a section, keeping only the newest `limit` lines.
+
+    Creates the section at the end of the file if it isn't there yet, so an
+    agent built before a section existed picks it up without a rebuild."""
+    if not CACHE_PATH.exists():
+        return
+    text = CACHE_PATH.read_text()
+    start = text.find(header)
+    if start == -1:
+        text = text.rstrip("\n") + f"\n\n{header}(empty)\n"
+        start = text.find(header)
+    start += len(header)
+    end = text.find(NEXT_SECTION_HEADER, start)
+    before, after = text[:start], (text[end:] if end != -1 else "")
+    current = text[start : end if end != -1 else None].strip()
+    entries = [] if (not current or current == "(empty)") else current.splitlines()
+    entries.append(entry)
+    entries = [line for line in entries if line.strip()][-limit:]
+    CACHE_PATH.write_text(before + "\n".join(entries) + "\n" + after)
+
+
+def _load_memory() -> str:
+    return _read_section(MEMORY_HEADER)
 
 
 # Every stored memory is replayed into the system prompt on every turn, so an
 # unbounded list would grow the prompt without limit and eventually crowd out
 # the conversation. Oldest entries are dropped first.
 MAX_MEMORY_ENTRIES = 60
+
+# The tool log is working memory, not history: it exists so a multi-step task
+# can build on what earlier steps returned. Kept much shorter than memory, and
+# each result truncated, because tool output can be enormous.
+MAX_TOOL_LOG_ENTRIES = 15
+MAX_TOOL_RESULT_CHARS = 600
+MAX_TOOL_ARGS_CHARS = 200
 
 MEMORY_INSTRUCTIONS = """
 
@@ -159,6 +194,23 @@ will still make sense with no surrounding context. Do not save trivia, one-off q
 anything already listed under "Agent memory" below. Never tell the user you will remember \
 something without calling the tool in the same turn."""
 
+TOOL_LOG_INSTRUCTIONS = """
+
+## Recent tool calls
+Below is a log of the tool calls you have already made, with their arguments and what they \
+returned, oldest first. Only the text of your replies survives between turns — the tool \
+results themselves do not — so this log is how you keep hold of intermediate results while \
+working through a multi-step problem.
+
+Use it: build on values you have already computed or fetched instead of recalculating them, \
+and do not repeat an identical call with identical arguments when its result is here already. \
+Treat an entry as stale if the user has since changed the inputs, or if it could have changed \
+on its own (a time, a price, a live page) — re-run the call in that case."""
+
+
+def _load_tool_log() -> str:
+    return _read_section(TOOL_LOG_HEADER)
+
 
 def _effective_system_prompt() -> str:
     base = _load_system_prompt()
@@ -166,29 +218,42 @@ def _effective_system_prompt() -> str:
     # the prompt must always explain it, whether or not anything is stored yet.
     prompt = f"{base}{MEMORY_INSTRUCTIONS}"
     memory = _load_memory()
-    if not memory:
-        return f"{prompt}\n\nYour memory is currently empty."
-    return f"{prompt}\n\n## Agent memory (from prior sessions)\n{memory}"
+    prompt += (
+        f"\n\n## Agent memory (from prior sessions)\n{memory}"
+        if memory
+        else "\n\nYour memory is currently empty."
+    )
+    # Only described when there's something in it — instructions for reading a
+    # log that doesn't exist just invite the model to invent entries.
+    tool_log = _load_tool_log()
+    if tool_log:
+        prompt += f"{TOOL_LOG_INSTRUCTIONS}\n\n{tool_log}"
+    return prompt
 
 
 def _append_memory(note: str) -> None:
-    if not CACHE_PATH.exists():
-        return
-    text = CACHE_PATH.read_text()
-    start = text.find(MEMORY_HEADER)
-    if start == -1:
-        return
-    start += len(MEMORY_HEADER)
-    end = text.find(NEXT_SECTION_HEADER, start)
-    before = text[:start]
-    after = text[end:] if end != -1 else ""
-    current = text[start:end if end != -1 else None].strip()
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    entry = f"- [{timestamp}] {note}"
-    entries = [] if (not current or current == "(empty)") else current.splitlines()
-    entries.append(entry)
-    entries = [line for line in entries if line.strip()][-MAX_MEMORY_ENTRIES:]
-    CACHE_PATH.write_text(before + "\n".join(entries) + "\n" + after)
+    _append_to_section(MEMORY_HEADER, f"- [{timestamp}] {note}", MAX_MEMORY_ENTRIES)
+
+
+def _squash(text: str, limit: int) -> str:
+    """One-line, length-capped form of a value, so a log entry stays one line."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+def _log_tool_call(name: str, arguments: dict, result: str) -> None:
+    """Record a completed tool call so later turns can build on its result."""
+    try:
+        args = json.dumps(arguments, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args = str(arguments)
+    timestamp = datetime.utcnow().strftime("%H:%M UTC")
+    entry = (
+        f"- [{timestamp}] {name}({_squash(args, MAX_TOOL_ARGS_CHARS)}) "
+        f"-> {_squash(result, MAX_TOOL_RESULT_CHARS)}"
+    )
+    _append_to_section(TOOL_LOG_HEADER, entry, MAX_TOOL_LOG_ENTRIES)
 
 
 class ChatImage(BaseModel):
@@ -389,9 +454,16 @@ def _execute_tool(name: str, arguments: dict) -> str:
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:
-        return asyncio.run(_async_call_tool(info["mcp_url"], name, call_args))
+        result = asyncio.run(_async_call_tool(info["mcp_url"], name, call_args))
     except Exception as exc:  # noqa: BLE001 - surface the failure to the model, not a 500
-        return f"Error calling tool {name!r}: {exc}"
+        result = f"Error calling tool {name!r}: {exc}"
+    # Logged from here rather than from each provider's loop so every path —
+    # chat, custom endpoints, cron — records calls the same way. Failures are
+    # logged too: knowing a call already failed is what stops the model
+    # retrying it identically. The API key is deliberately logged from
+    # `arguments`, not `call_args`, so an injected secret never lands on disk.
+    _log_tool_call(name, arguments, result)
+    return result
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
