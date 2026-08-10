@@ -89,9 +89,12 @@ function App() {
     setView({ name: "wizard", agentId });
   }
 
-  async function handleStopped() {
+  // Refreshes the list but keeps the user where they are. Restarting an
+  // agent, regenerating its page, or connecting an account are all things you
+  // do while looking at the agent — being thrown back to the list each time
+  // makes them feel like they failed.
+  async function handleAgentUpdated() {
     await refreshAgents();
-    goHome();
   }
 
   async function handleRebuild(agent: Agent) {
@@ -153,8 +156,9 @@ function App() {
         {view.name === "agent" && currentAgent && (
           <AgentPage
             agent={currentAgent}
+            capabilities={capabilities}
             onBack={goHome}
-            onStopped={handleStopped}
+            onAgentUpdated={handleAgentUpdated}
             onRebuild={handleRebuild}
             notify={notify}
           />
