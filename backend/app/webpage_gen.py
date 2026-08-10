@@ -27,4 +27,11 @@ def generate_webpage(agent) -> str:
     html = html.replace("<h1>Agent</h1>", f"<h1>{name}</h1>", 1)
     html = html.replace("<p>Ask it anything.</p>", f"<p>{purpose}</p>", 1)
 
+    # Reveals the template's "Attach image" control, which is display:none
+    # until body[data-image-upload] is exactly "true". No model requirement:
+    # agents whose model can't read images get the vision sidecar's written
+    # description instead, so the capability alone decides this.
+    image_upload = "true" if "image_recognition" in agent.capability_keys else "false"
+    html = html.replace("__IMAGE_UPLOAD_ENABLED__", image_upload, 1)
+
     return html

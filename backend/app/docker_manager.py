@@ -5,6 +5,8 @@ from typing import Optional
 
 import httpx
 
+from app import registry
+
 IMAGE_TAG = "zovo-agent-runtime:latest"
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / "agent_runtime"
 CONTAINER_PORT = 8080
@@ -138,10 +140,19 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     env = {
         "MODEL_PROVIDER": agent.model_provider,
         "MODEL_ID": agent.model_id,
+        "MODEL_SUPPORTS_VISION": "1" if registry.supports_vision(agent.model_provider, agent.model_id) else "0",
     }
     if agent.model_api_key:
         env[PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")] = agent.model_api_key
     elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
+        env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
+
+    # The vision sidecar runs on Featherless no matter which provider the
+    # agent's own model uses, so a text-only agent still needs a Featherless
+    # key in its container to be able to see images. Only the platform key is
+    # used here — an agent's own key belongs to its chosen provider and may
+    # not be a Featherless one at all.
+    if "FEATHERLESS_API_KEY" not in env and os.environ.get("FEATHERLESS_API_KEY"):
         env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
 
     client = _get_client()
@@ -166,13 +177,16 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     return container.id, host_port
 
 
-def chat(agent, history: list[dict]) -> str:
+def chat(agent, history: list[dict], image: Optional[dict] = None) -> str:
     if not agent.container_port:
         raise RuntimeError("Agent has no running container. Deploy it again.")
+    payload: dict = {"history": history}
+    if image:
+        payload["image"] = image
     try:
         response = httpx.post(
             f"http://localhost:{agent.container_port}/chat",
-            json={"history": history},
+            json=payload,
             # Generous enough to cover a slow first request against a hosted
             # provider (cold client setup, a long multi-tool turn) — normal
             # replies come back in a few seconds anyway.

@@ -40,6 +40,41 @@ CAPABILITY_KEY_PARAM = {"wolfram_alpha": "app_id"}
 MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "anthropic")
 MODEL_ID = os.environ.get("MODEL_ID", "claude-sonnet-5")
 
+# Whether this agent's OWN model can accept image input natively. Decided by
+# the backend at deploy time (registry.py is the source of truth) rather than
+# re-derived here, so the model list only has to be maintained in one place.
+MODEL_SUPPORTS_VISION = os.environ.get("MODEL_SUPPORTS_VISION") == "1"
+
+# Vision sidecar: a separate vision-language model that describes uploaded
+# images in words, so an agent whose own model is text-only can still "see".
+# The image goes to this model, and only its written description is spliced
+# into the conversation the agent's real model sees. That keeps image support
+# a property of the platform instead of a property of the chosen model — at
+# the cost of one extra API call, and of the agent reasoning over a
+# description rather than raw pixels (fine detail, exact text, and precise
+# spatial layout can be lost). Agents whose model IS natively vision-capable
+# skip this entirely and get the real image.
+# Tried in order, best-quality first. Featherless is serverless, so any one
+# vision model can transiently answer "busy"/"at capacity" — falling back down
+# the size ladder keeps image support working instead of failing the turn.
+# These are all open-weight Qwen VL models running on the platform's existing
+# Featherless plan: no Anthropic/OpenAI call, and no extra paid subscription.
+VISION_SIDECAR_MODELS = [
+    m.strip()
+    for m in os.environ.get(
+        "VISION_SIDECAR_MODELS",
+        "Qwen/Qwen2.5-VL-72B-Instruct,Qwen/Qwen2.5-VL-32B-Instruct,Qwen/Qwen2.5-VL-7B-Instruct",
+    ).split(",")
+    if m.strip()
+]
+VISION_SIDECAR_MAX_TOKENS = 700
+VISION_SIDECAR_PROMPT = (
+    "Describe this image in thorough, concrete detail so that someone who cannot see it "
+    "could answer questions about it. Transcribe any visible text verbatim. Describe "
+    "objects, people, colors, layout, and anything notable. Do not speculate about what "
+    "is not visible, and do not add commentary — just the description."
+)
+
 SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
 MEMORY_HEADER = "## Memory\n"
@@ -478,34 +513,88 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
     raise RuntimeError(f"Unsupported model provider: {MODEL_PROVIDER}")
 
 
+def _describe_image(image: ChatImage) -> str:
+    """Runs the vision sidecar over an uploaded image and returns its written
+    description. Used only for agents whose own model can't take image input.
+
+    Walks VISION_SIDECAR_MODELS in order and returns the first real answer, so
+    a model that's transiently busy on Featherless doesn't take image support
+    down with it. Raises only if every candidate fails."""
+    client = _get_featherless()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image.media_type};base64,{image.data}"},
+                },
+                {"type": "text", "text": VISION_SIDECAR_PROMPT},
+            ],
+        }
+    ]
+    last_error: Exception | None = None
+    for model in VISION_SIDECAR_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model, max_tokens=VISION_SIDECAR_MAX_TOKENS, messages=messages
+            )
+        except Exception as exc:  # noqa: BLE001 - try the next candidate
+            last_error = exc
+            continue
+        text = _strip_thinking(response.choices[0].message.content or "").strip()
+        if text:
+            return text
+        last_error = RuntimeError(f"{model} returned an empty description")
+    raise RuntimeError(f"every vision model failed (last: {last_error})")
+
+
 def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict]:
-    """Attaches an uploaded image to the last (newest) user message, in
-    whichever shape the current provider expects — Anthropic wants a
-    multi-part content list with an embedded base64 image block, Featherless
-    wants an OpenAI-style `image_url` part with a data URI. Build validation
-    only allows Image Recognition on a vision-capable model/provider
-    combination, so any other provider here just gets the image silently
-    dropped."""
+    """Attaches an uploaded image to the last (newest) user message.
+
+    A natively vision-capable model gets the real image, in whichever shape its
+    provider expects — Anthropic wants a multi-part content list with an
+    embedded base64 image block, Featherless wants an OpenAI-style `image_url`
+    part with a data URI.
+
+    Every other model gets the vision sidecar's written description of the
+    image spliced in as plain text, so a text-only agent can still answer
+    questions about what was uploaded. If the sidecar itself fails, say so in
+    the transcript rather than dropping the image silently — an agent that
+    ignores an attachment with no explanation looks broken."""
     if not history or history[-1].get("role") != "user":
         return history
 
-    if MODEL_PROVIDER == "anthropic":
-        text = history[-1]["content"]
+    text = history[-1]["content"]
+
+    if MODEL_SUPPORTS_VISION and MODEL_PROVIDER == "anthropic":
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": image.media_type, "data": image.data}},
             {"type": "text", "text": text},
         ]
         return history[:-1] + [{"role": "user", "content": content}]
 
-    if MODEL_PROVIDER == "featherless":
-        text = history[-1]["content"]
+    if MODEL_SUPPORTS_VISION and MODEL_PROVIDER == "featherless":
         content = [
             {"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.data}"}},
             {"type": "text", "text": text},
         ]
         return history[:-1] + [{"role": "user", "content": content}]
 
-    return history
+    _set_status("Looking at the image…")
+    try:
+        description = _describe_image(image)
+    except Exception as exc:  # noqa: BLE001 - any sidecar failure degrades to a note
+        description = ""
+        note = f"[The user attached an image, but it could not be read: {exc}]"
+    else:
+        note = (
+            "[The user attached an image. You cannot see it directly, so here is a "
+            f"description of it from a vision model:\n{description}\n]"
+        )
+    if description == "" and "could not be read" not in note:
+        note = "[The user attached an image, but no description could be produced for it.]"
+    return history[:-1] + [{"role": "user", "content": f"{note}\n\n{text}"}]
 
 
 @app.post("/chat", response_model=ChatResponse)

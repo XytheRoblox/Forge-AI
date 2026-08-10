@@ -9,7 +9,7 @@ import croniter
 import jsonschema
 from sqlmodel import Session, select
 
-from app import docker_manager, mcp_manager, webpage_gen, workspace
+from app import docker_manager, mcp_manager, registry, webpage_gen, workspace
 from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
@@ -72,34 +72,25 @@ def get_job(job_id: str) -> Optional[BuildJob]:
     return _JOBS.get(job_id)
 
 
-FEATHERLESS_VISION_MODELS = {
-    "Qwen/Qwen2.5-VL-72B-Instruct",
-    "Qwen/Qwen2.5-VL-32B-Instruct",
-    "Qwen/Qwen2.5-VL-7B-Instruct",
-}
-
-
-def _is_vision_capable(model_provider: str, model_id: str) -> bool:
-    if model_provider == "anthropic":
-        return True
-    if model_provider == "featherless":
-        return model_id in FEATHERLESS_VISION_MODELS
-    return False
-
-
 def _validate(agent: Agent) -> Optional[str]:
     if not agent.name or not agent.name.strip():
         return "Agent name is required."
     if not agent.system_prompt or not agent.system_prompt.strip():
         return "No system prompt set. Write one directly or expand a manifesto first."
-    if "image_recognition" in agent.capability_keys and not _is_vision_capable(
-        agent.model_provider, agent.model_id
+    # Image Recognition deliberately has no model requirement: models that
+    # can't take image input get uploads described by the vision sidecar
+    # instead (see agent_runtime/app.py), so every agent can use it. The
+    # sidecar runs on Featherless, though, so a platform key has to exist for
+    # any agent that isn't already carrying one of its own.
+    if (
+        "image_recognition" in agent.capability_keys
+        and not registry.supports_vision(agent.model_provider, agent.model_id)
+        and not os.environ.get("FEATHERLESS_API_KEY")
     ):
         return (
-            "Image Recognition requires a vision-capable model (any Anthropic Claude model, or "
-            f"a vision-capable Featherless model) — this agent uses "
-            f"{agent.model_provider}/{agent.model_id}, which doesn't support image input. "
-            "Pick a supported model, or remove this capability."
+            f"Image Recognition on {agent.model_provider}/{agent.model_id} needs the vision "
+            "sidecar, which runs on Featherless — but the platform has no FEATHERLESS_API_KEY "
+            "configured. Add one to backend/.env, or pick a model that reads images natively."
         )
     if not agent.model_api_key:
         if agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):

@@ -150,16 +150,25 @@ def chat_with_agent(agent_id: int, payload: ChatRequest, session: Session = Depe
         select(Message).where(Message.agent_id == agent_id).order_by(Message.created_at)
     ).all()
 
-    user_message = Message(agent_id=agent_id, role="user", content=payload.message)
+    # The image itself is deliberately not persisted on the Message — the
+    # transcript stays text-only, and the note the runtime splices in (either
+    # the sidecar's description or a native image block) lives only in the
+    # single turn it was uploaded for.
+    stored_content = payload.message
+    if payload.image:
+        stored_content = f"{payload.message}\n\n[image attached]" if payload.message else "[image attached]"
+    user_message = Message(agent_id=agent_id, role="user", content=stored_content)
     session.add(user_message)
     session.commit()
     session.refresh(user_message)
 
     history = [{"role": m.role, "content": m.content} for m in prior]
-    history.append({"role": "user", "content": payload.message})
+    history.append({"role": "user", "content": payload.message or "What is in this image?"})
 
     try:
-        reply_text = docker_manager.chat(agent, history)
+        reply_text = docker_manager.chat(
+            agent, history, image=payload.image.model_dump() if payload.image else None
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

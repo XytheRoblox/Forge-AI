@@ -87,8 +87,14 @@ class ExpandManifestoResponse(BaseModel):
     system_prompt: str
 
 
+class ChatImage(BaseModel):
+    data: str  # base64, no data: URI prefix
+    media_type: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    image: Optional[ChatImage] = None
 
 
 class MessageRead(BaseModel):

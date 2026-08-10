@@ -1,5 +1,33 @@
 from app.schemas import CapabilityOption, ModelOption
 
+# Models that accept image input natively. Everything NOT listed here still
+# supports images at the agent level — the agent runtime routes uploads
+# through a vision sidecar and feeds the model a written description instead
+# (see agent_runtime/app.py). So this set decides "real pixels vs. a
+# description", not "images work vs. images don't".
+#
+# The Qwen VL entries are no longer offered as agent models (they don't do
+# tool calling reliably, so they'd break MCP capabilities) — they're the
+# sidecar's own models. They stay listed here so an agent created before that
+# change still gets its image passed through natively instead of being
+# needlessly round-tripped through a description of itself.
+NATIVE_VISION_MODEL_IDS = {
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "Qwen/Qwen2.5-VL-32B-Instruct",
+    "Qwen/Qwen2.5-VL-7B-Instruct",
+}
+
+# Providers whose whole current lineup takes image input, so individual model
+# IDs don't have to be enumerated.
+NATIVE_VISION_PROVIDERS = {"anthropic"}
+
+
+def supports_vision(model_provider: str, model_id: str) -> bool:
+    """Whether this model can be handed a raw image, rather than needing the
+    vision sidecar to describe it first."""
+    return model_provider in NATIVE_VISION_PROVIDERS or model_id in NATIVE_VISION_MODEL_IDS
+
+
 MODEL_OPTIONS: list[ModelOption] = [
     # --- Anthropic — requires paid API key ---
     ModelOption(
@@ -83,15 +111,14 @@ MODEL_OPTIONS: list[ModelOption] = [
         description="A smaller, faster version of Groq Compound. Requires your own API key.",
         available=False,
     ),
-    # --- Featherless AI — confirmed working with tool calling (MCP) ---
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        model_id="meta-llama/Llama-3.3-70B-Instruct",
-        label="Llama 3.3 70B Instruct",
-        description="Meta's latest and most capable open model — strong reasoning and tool use. Fast inference.",
-        available=True,
-    ),
+    # --- Featherless AI — every model below emitted a real, structured
+    # tool_call when probed against the live API, which is what MCP
+    # capabilities require. Models that only *describe* a tool call in prose
+    # (Qwen2.5-Coder-32B, Mistral-Small-3.2, Magistral-Small, Devstral-Small),
+    # that return malformed tool arguments (Hermes-3-70B emits concatenated
+    # JSON objects), or that aren't reachable on this plan at all
+    # (Llama-3.3-70B is gated) are deliberately left out: with those, an agent
+    # would look like it had capabilities and then silently never use them. ---
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
@@ -140,29 +167,77 @@ MODEL_OPTIONS: list[ModelOption] = [
         description="Fastest free model — lightweight but still supports tool calling. Best for simple agents.",
         available=True,
     ),
-    # --- Featherless AI — Vision + Tool Use (Qwen VL series) ---
+    # --- Featherless AI — reasoning / frontier open models ---
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-VL-72B-Instruct",
-        label="Qwen 2.5 VL 72B (Vision)",
-        description="Vision-language model — can see images AND use tools. Most capable multimodal option.",
+        model_id="deepseek-ai/DeepSeek-V3.2",
+        label="DeepSeek V3.2",
+        description="DeepSeek's latest flagship — top-tier reasoning and tool use with a very large context window. Best free model for hard, multi-step agents.",
         available=True,
     ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-VL-32B-Instruct",
-        label="Qwen 2.5 VL 32B (Vision)",
-        description="Vision-language model — image understanding plus tool use. Good balance of speed and capability.",
+        model_id="deepseek-ai/DeepSeek-V3.1-Terminus",
+        label="DeepSeek V3.1 Terminus",
+        description="Stable, heavily-tested DeepSeek release — excellent reasoning and reliable tool calling.",
         available=True,
     ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",
-        model_id="Qwen/Qwen2.5-VL-7B-Instruct",
-        label="Qwen 2.5 VL 7B (Vision)",
-        description="Fast vision-language model — image input with tool use. Best for simple visual agents.",
+        model_id="Qwen/Qwen3-Coder-480B-A35B-Instruct",
+        label="Qwen 3 Coder 480B",
+        description="Qwen's largest agentic coding model — the strongest tool user in the catalog. Best for agents that chain many capability calls.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        label="Qwen 3 Coder 30B",
+        description="Mixture-of-experts coding model — strong tool use at a fraction of the 480B's cost and latency.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="mistralai/Mistral-Large-Instruct-2411",
+        label="Mistral Large",
+        description="Mistral's flagship open model — strong general reasoning with dependable function calling.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="mistralai/Mistral-Medium-3.5-128B",
+        label="Mistral Medium 3.5",
+        description="Mid-size Mistral with a 128K context window — good for agents that need to hold a lot of material at once.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="NousResearch/Hermes-4-70B",
+        label="Hermes 4 70B",
+        description="Nous Research's tool-use-tuned Llama — built specifically for agentic workflows and structured output.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="NousResearch/Hermes-4-14B",
+        label="Hermes 4 14B",
+        description="Smaller Hermes 4 — keeps the agentic tool-use tuning with faster, cheaper responses.",
+        available=True,
+    ),
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        model_id="Qwen/Qwen3-4B-Instruct-2507",
+        label="Qwen 3 4B",
+        description="Very fast small model that still emits proper tool calls. Best when latency matters more than depth.",
         available=True,
     ),
     # --- OpenAI — direct API, not wired up yet ---
@@ -328,7 +403,7 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
     CapabilityOption(
         key="image_recognition",
         name="Image Recognition",
-        description="Lets the agent see and analyze images you upload in chat. Requires a vision-capable model (any Qwen VL model).",
+        description="Lets the agent see and analyze images you upload in chat. Works with any model — models that can't read images directly get a written description from a vision model instead.",
         icon="🖼️",
         wired=True,
         mcp_server=None,

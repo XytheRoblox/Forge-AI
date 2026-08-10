@@ -6,6 +6,8 @@ from typing import Optional
 
 import httpx
 
+from app import registry
+
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / "agent_runtime"
 CONTAINER_PORT = 8080
 
@@ -75,11 +77,22 @@ def deploy_agent(agent, workspace_dir: Path) -> tuple[str, str]:
     image_uri = _build_and_push(agent.id, workspace_dir)
     service_name = _service_name(agent.id)
 
-    env_vars = [f"MODEL_PROVIDER={agent.model_provider}", f"MODEL_ID={agent.model_id}"]
+    env_vars = [
+        f"MODEL_PROVIDER={agent.model_provider}",
+        f"MODEL_ID={agent.model_id}",
+        f"MODEL_SUPPORTS_VISION={'1' if registry.supports_vision(agent.model_provider, agent.model_id) else '0'}",
+    ]
+    has_featherless_key = False
     if agent.model_api_key:
         key_name = PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")
         env_vars.append(f"{key_name}={agent.model_api_key}")
+        has_featherless_key = key_name == "FEATHERLESS_API_KEY"
     elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
+        env_vars.append(f"FEATHERLESS_API_KEY={os.environ['FEATHERLESS_API_KEY']}")
+        has_featherless_key = True
+    # Mirrors docker_manager: the vision sidecar always runs on Featherless, so
+    # even a non-Featherless agent needs a platform key to be able to see images.
+    if not has_featherless_key and os.environ.get("FEATHERLESS_API_KEY"):
         env_vars.append(f"FEATHERLESS_API_KEY={os.environ['FEATHERLESS_API_KEY']}")
 
     cmd = [
