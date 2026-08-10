@@ -186,6 +186,20 @@ MAX_TOOL_LOG_ENTRIES = 15
 MAX_TOOL_RESULT_CHARS = 600
 MAX_TOOL_ARGS_CHARS = 200
 
+# What a tool result is allowed to contribute to the PROMPT. Scrapers and file
+# readers return whole documents — a single Firecrawl page can be tens of
+# thousands of tokens — and the full result was being appended to the
+# conversation untruncated, so one scrape could blow past the model's context
+# limit and fail the turn outright. The model gets the top of the result,
+# which is where the answer almost always is, plus a marker so it knows the
+# text was cut rather than assuming it saw everything.
+MAX_TOOL_RESULT_TO_MODEL = 12000
+
+# Ceiling on replayed conversation. Transcripts only grow, so without this an
+# agent works fine for a week and then starts failing on every message with no
+# change in what the user is doing.
+MAX_HISTORY_CHARS = 40000
+
 MEMORY_INSTRUCTIONS = """
 
 ## Memory
@@ -527,7 +541,13 @@ async def _discover_tools() -> None:
             print(f"[capabilities] could not reach {capability['key']}: {exc}")
             continue
         key_param = CAPABILITY_KEY_PARAM.get(capability["key"])
+        # Several capabilities can share one server process (every Google one
+        # does). When a capability declares which tools are its own, ignore the
+        # rest — otherwise whichever is discovered last relabels them all.
+        owned = capability.get("tools")
         for tool in tools:
+            if owned and tool.name not in owned:
+                continue
             input_schema = tool.inputSchema
             if key_param and key_param in input_schema.get("properties", {}):
                 input_schema = dict(input_schema)
@@ -612,6 +632,22 @@ async def _on_startup() -> None:
     await _discover_tools()
 
 
+def _trim_history(history: list[dict]) -> list[dict]:
+    """The most recent turns that fit the budget, oldest dropped first.
+
+    Kept whole-message: cutting a message in half leaves the model reading a
+    sentence that stops mid-clause and treating it as fact."""
+    kept: list[dict] = []
+    budget = MAX_HISTORY_CHARS
+    for message in reversed(history):
+        size = len(str(message.get("content") or ""))
+        if kept and size > budget:
+            break
+        kept.append(message)
+        budget -= size
+    return list(reversed(kept))
+
+
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
@@ -646,13 +682,25 @@ def _execute_tool(name: str, arguments: dict) -> str:
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
+# Scaffolding some models write into `content` while also returning proper
+# structured tool_calls — Hermes 4 emits a literal "<tool_call>" per call. It
+# isn't prose and it isn't a tool call; it's protocol debris, and it became
+# visible once interim narration started being kept.
+_TOOL_SCAFFOLD = re.compile(
+    r"</?\s*(tool_call|tool_response|function_call|function_results?)\s*>", re.IGNORECASE
+)
+
 
 def _strip_thinking(text: str) -> str:
-    """Some reasoning models (e.g. Groq's qwen/qwen3.6-27b) emit their chain
-    of thought directly in `content` wrapped in <think> tags, rather than in
-    a separate `reasoning` field — strip it so it doesn't leak into the
-    user-visible chat reply."""
-    return _THINK_BLOCK.sub("", text).strip()
+    """Model output with its scaffolding removed.
+
+    Some reasoning models (e.g. Groq's qwen/qwen3.6-27b) emit their chain of
+    thought directly in `content` wrapped in <think> tags rather than in a
+    separate `reasoning` field, and others leave tool-call markers behind.
+    Neither belongs in a user-visible reply."""
+    text = _THINK_BLOCK.sub("", text)
+    text = _TOOL_SCAFFOLD.sub("", text)
+    return text.strip()
 
 
 def _generate_reply(system_prompt: str, history: list[dict]) -> str:
@@ -671,7 +719,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             }
             for name, info in _TOOL_INDEX.items()
         ]
-        messages = [{"role": "system", "content": system_prompt}, *history]
+        messages = [{"role": "system", "content": system_prompt}, *_trim_history(history)]
         # What the model says WHILE calling tools — "first find the components,
         # then solve for the time" — is the working, and it was being thrown away:
         # only the last message survived, so a decomposed answer arrived as a bare
@@ -684,8 +732,12 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                 kwargs["tools"] = tools
             return client.chat.completions.create(**kwargs)
 
+        last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            _set_status("Thinking…")
+            # After a tool call the model is reasoning about what came back.
+            # Saying "Thinking…" again makes the tool name flash past and
+            # vanish, which reads as though the call was abandoned.
+            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
             try:
                 response = _call_groq(use_tools=True)
             except BadRequestError:
@@ -720,8 +772,10 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
             # 0-9, with a length of 9"), so this pads to precisely that rather
             # than using a readable "call_1".
-            interim = _strip_thinking(message.content or "").strip()
-            if interim:
+            # Keep the model's working, but not bare punctuation left behind
+            # once scaffolding is stripped — that reads as a glitch, not a step.
+            interim = _strip_thinking(message.content or "")
+            if interim and any(ch.isalnum() for ch in interim):
                 narration.append(interim)
             call_ids = [
                 tc.id or f"c{round_index:02d}{position:02d}0000"
@@ -746,9 +800,16 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Contacting {_tool_label(tool_call.function.name)}…")
+                last_tool = _tool_label(tool_call.function.name)
+                _set_status(f"Contacting {last_tool}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": _clip(result_text, MAX_TOOL_RESULT_TO_MODEL),
+                    }
+                )
 
         _set_status("Writing the answer…")
         response = _call_groq(use_tools=False)
@@ -769,15 +830,19 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             }
             for name, info in _TOOL_INDEX.items()
         ]
-        messages = [{"role": "system", "content": system_prompt}, *history]
+        messages = [{"role": "system", "content": system_prompt}, *_trim_history(history)]
         # What the model says WHILE calling tools — "first find the components,
         # then solve for the time" — is the working, and it was being thrown away:
         # only the last message survived, so a decomposed answer arrived as a bare
         # "Final answer:" with the steps that justified it missing.
         narration: list[str] = []
 
+        last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            _set_status("Thinking…")
+            # After a tool call the model is reasoning about what came back.
+            # Saying "Thinking…" again makes the tool name flash past and
+            # vanish, which reads as though the call was abandoned.
+            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
             kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
             if tools:
                 kwargs["tools"] = tools
@@ -800,8 +865,10 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
             # 0-9, with a length of 9"), so this pads to precisely that rather
             # than using a readable "call_1".
-            interim = _strip_thinking(message.content or "").strip()
-            if interim:
+            # Keep the model's working, but not bare punctuation left behind
+            # once scaffolding is stripped — that reads as a glitch, not a step.
+            interim = _strip_thinking(message.content or "")
+            if interim and any(ch.isalnum() for ch in interim):
                 narration.append(interim)
             call_ids = [
                 tc.id or f"c{round_index:02d}{position:02d}0000"
@@ -826,9 +893,16 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Contacting {_tool_label(tool_call.function.name)}…")
+                last_tool = _tool_label(tool_call.function.name)
+                _set_status(f"Contacting {last_tool}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": _clip(result_text, MAX_TOOL_RESULT_TO_MODEL),
+                    }
+                )
 
         _set_status("Writing the answer…")
         response = client.chat.completions.create(

@@ -4,7 +4,12 @@ from pathlib import Path
 
 import os
 
-from app.registry import CAPABILITY_OPTIONS, GOOGLE_STDIO_SERVER, STDIO_SERVERS
+from app.registry import (
+    CAPABILITY_OPTIONS,
+    GOOGLE_STDIO_SERVER,
+    GOOGLE_TOOLS,
+    STDIO_SERVERS,
+)
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "agent_workspaces"
 
@@ -132,6 +137,9 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
                 "GOOGLE_REFRESH_TOKEN": grant.get("refresh_token") or "",
                 "GOOGLE_CAPABILITIES": ",".join(google_keys),
             }
+            # Only claim the tools this capability actually owns, so a chip
+            # names the product the call went to.
+            entry["tools"] = GOOGLE_TOOLS.get(key, [])
             entries.append(entry)
             continue
 

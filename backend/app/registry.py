@@ -74,6 +74,19 @@ GOOGLE_STDIO_SERVER = {
 }
 
 
+# Which tools each Google capability owns. All of them are served by ONE
+# process, so without this every tool gets labelled with whichever capability
+# happened to be discovered last — a Classroom lookup showing up as
+# "Calendar". Kept beside the scopes so the two stay in step.
+GOOGLE_TOOLS: dict[str, list[str]] = {
+    "calendar": ["list_calendar_events", "create_calendar_event"],
+    "google_classroom": ["list_courses", "list_coursework"],
+    "google_docs": ["create_doc", "read_doc"],
+    "google_sheets": ["read_sheet", "append_sheet_row"],
+    "google_drive": ["find_drive_files"],
+}
+
+
 def google_capabilities() -> list[str]:
     return [c.key for c in CAPABILITY_OPTIONS if c.oauth_provider == "google"]
 

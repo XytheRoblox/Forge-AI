@@ -50,18 +50,29 @@ export function GoogleConnect({ capabilities, agent, onPersist, onChanged, notif
   }, []);
 
   const connect = useCallback(async () => {
+    // The window MUST be opened synchronously, in the click itself. A browser
+    // only honours window.open while the user gesture is still on the stack,
+    // and this handler has async work to do first (saving the agent, then
+    // asking the backend for a consent URL) — opening afterwards is silently
+    // blocked, which looks exactly like the button doing nothing. So take the
+    // window now and point it at the URL once we have one.
+    const popup = window.open("", "forge-google-oauth", "width=520,height=680");
+    if (!popup) {
+      notify("Allow pop-ups for this site to connect a Google account.", "error");
+      return;
+    }
+    popup.document.write(
+      "<p style='font-family:system-ui,sans-serif;padding:32px;text-align:center;color:#666'>" +
+        "Taking you to Google…</p>"
+    );
+
     setConnecting(true);
     try {
       // Persist first: the agent may not exist yet, and even if it does its
       // stored capability list predates the selection being consented to.
       const saved = await onPersist();
       const { authorization_url } = await api.startGoogleOAuth(saved.id);
-      const popup = window.open(authorization_url, "forge-google-oauth", "width=520,height=680");
-      if (!popup) {
-        notify("Allow pop-ups for this site to connect a Google account.", "error");
-        setConnecting(false);
-        return;
-      }
+      popup.location.href = authorization_url;
       const finish = () => {
         window.removeEventListener("message", onMessage);
         clearInterval(poll);
@@ -80,6 +91,8 @@ export function GoogleConnect({ capabilities, agent, onPersist, onChanged, notif
         if (popup.closed) finish();
       }, 700);
     } catch (e) {
+      // Don't strand a blank window the user has to close themselves.
+      popup.close();
       notify((e as Error).message, "error");
       setConnecting(false);
     }
