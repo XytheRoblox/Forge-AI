@@ -217,6 +217,34 @@ def _wait_for_port(host_port: int, timeout: float = 60.0) -> None:
     raise RuntimeError(f"MCP server did not start listening in time ({last_error}).")
 
 
+def _assert_container_healthy(container, mcp_server_key: str, restarts_before: int) -> None:
+    """Fail a capability that came up dead, rather than reporting it started.
+
+    _wait_for_port only proves something accepted a TCP connection on the
+    PUBLISHED port — and Docker's userland proxy accepts on that port whether
+    or not anything inside the container is actually listening. A server that
+    exits immediately therefore sails through the port check while its
+    container sits in a crash loop, and the agent only finds out later when
+    every tool call fails. Comparing the restart count across the startup
+    window catches exactly that, without flagging a long-running container
+    that happened to restart legitimately at some point in the past."""
+    container.reload()
+    status = container.status
+    restarts_after = container.attrs.get("RestartCount", 0)
+    if status == "running" and restarts_after == restarts_before:
+        return
+    try:
+        logs = container.logs(tail=15).decode("utf-8", "replace").strip()
+    except Exception:  # noqa: BLE001 - diagnostics only; never mask the real failure
+        logs = "(no logs available)"
+    reason = (
+        f"it is {status}" if status != "running" else f"it restarted {restarts_after - restarts_before}x while starting"
+    )
+    raise RuntimeError(
+        f"the {mcp_server_key!r} container did not stay up — {reason}. Last output:\n{logs}"
+    )
+
+
 def ensure_running(mcp_server_key: str) -> str:
     """Ensure the shared MCP server for this key is running and return its SSE URL.
     In cloudrun mode, delegates to mcp_cloudrun; otherwise uses local Docker."""
@@ -266,7 +294,9 @@ def ensure_running(mcp_server_key: str) -> str:
     if not bindings:
         raise RuntimeError(f"MCP server {mcp_server_key!r} did not publish its port.")
     host_port = int(bindings[0]["HostPort"])
+    restarts_before = container.attrs.get("RestartCount", 0)
     _wait_for_port(host_port)
+    _assert_container_healthy(container, mcp_server_key, restarts_before)
 
     if CAPABILITIES_HOST:
         return f"http://{CAPABILITIES_HOST}:{host_port}{spec['sse_path']}"
