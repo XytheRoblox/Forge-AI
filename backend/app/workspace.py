@@ -8,7 +8,6 @@ SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
 
 MEMORY_SECTION_HEADER = "## Memory"
-TOOL_CACHE_SECTION_HEADER = "## Tool Response Cache"
 
 
 def workspace_dir(agent_id: int) -> Path:
@@ -43,12 +42,12 @@ def write_cache_if_missing(agent) -> None:
     path = workspace_dir(agent.id) / "CACHE.md"
     if path.exists():
         return
+    # Only the Memory section exists. A "## Tool Response Cache" section used
+    # to be written here too, but nothing ever read or wrote it — it was dead
+    # scaffolding that made every agent look like it had a working tool cache.
     content = f"""# Cache
 
 {MEMORY_SECTION_HEADER}
-(empty)
-
-{TOOL_CACHE_SECTION_HEADER}
 (empty)
 """
     path.write_text(content)

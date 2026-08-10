@@ -140,12 +140,35 @@ def _load_memory() -> str:
     return "" if memory == "(empty)" else memory
 
 
+# Every stored memory is replayed into the system prompt on every turn, so an
+# unbounded list would grow the prompt without limit and eventually crowd out
+# the conversation. Oldest entries are dropped first.
+MAX_MEMORY_ENTRIES = 60
+
+MEMORY_INSTRUCTIONS = """
+
+## Memory
+You have a `remember` tool that saves a fact to your long-term memory. Memory persists \
+across conversations; the chat transcript does not, so anything not saved is lost when the \
+conversation ends.
+
+Call `remember` as soon as you learn something durable and worth keeping — the user's name, \
+their preferences, their goals, constraints, or decisions you have agreed on — and whenever \
+the user asks you to remember something. Save the fact itself as a standalone sentence that \
+will still make sense with no surrounding context. Do not save trivia, one-off questions, or \
+anything already listed under "Agent memory" below. Never tell the user you will remember \
+something without calling the tool in the same turn."""
+
+
 def _effective_system_prompt() -> str:
     base = _load_system_prompt()
+    # The instructions are unconditional: `remember` is always available, so
+    # the prompt must always explain it, whether or not anything is stored yet.
+    prompt = f"{base}{MEMORY_INSTRUCTIONS}"
     memory = _load_memory()
     if not memory:
-        return base
-    return f"{base}\n\n## Agent memory (from prior sessions)\n{memory}"
+        return f"{prompt}\n\nYour memory is currently empty."
+    return f"{prompt}\n\n## Agent memory (from prior sessions)\n{memory}"
 
 
 def _append_memory(note: str) -> None:
@@ -162,8 +185,10 @@ def _append_memory(note: str) -> None:
     current = text[start:end if end != -1 else None].strip()
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     entry = f"- [{timestamp}] {note}"
-    new_memory = f"{current}\n{entry}\n" if current and current != "(empty)" else f"{entry}\n"
-    CACHE_PATH.write_text(before + new_memory + after)
+    entries = [] if (not current or current == "(empty)") else current.splitlines()
+    entries.append(entry)
+    entries = [line for line in entries if line.strip()][-MAX_MEMORY_ENTRIES:]
+    CACHE_PATH.write_text(before + "\n".join(entries) + "\n" + after)
 
 
 class ChatImage(BaseModel):
@@ -298,8 +323,56 @@ async def _discover_tools() -> None:
             }
 
 
+# Built-in tools are part of the runtime rather than an MCP capability, so
+# they're registered for every agent unconditionally — an agent with no
+# capabilities attached still gets memory.
+BUILTIN_TOOLS = {
+    "remember": {
+        "description": (
+            "Save a fact to your long-term memory so you still know it in future "
+            "conversations. Use it for durable things — the user's name, preferences, "
+            "goals, constraints, or agreed decisions — and whenever the user asks you to "
+            "remember something."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "description": (
+                        "The fact to remember, as a standalone sentence that will still "
+                        "make sense with no surrounding context."
+                    ),
+                }
+            },
+            "required": ["note"],
+        },
+    }
+}
+
+
+def _register_builtin_tools() -> None:
+    for name, spec in BUILTIN_TOOLS.items():
+        _TOOL_INDEX[name] = {
+            "builtin": True,
+            "description": spec["description"],
+            "input_schema": spec["input_schema"],
+        }
+
+
+def _run_builtin_tool(name: str, arguments: dict) -> str:
+    if name == "remember":
+        note = (arguments.get("note") or "").strip()
+        if not note:
+            return "Error: `note` is required and cannot be empty."
+        _append_memory(note)
+        return f"Saved to memory: {note}"
+    return f"Error: unknown built-in tool {name!r}"
+
+
 @app.on_event("startup")
 async def _on_startup() -> None:
+    _register_builtin_tools()
     await _discover_tools()
 
 
@@ -307,6 +380,11 @@ def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
         return f"Error: unknown tool {name!r}"
+    if info.get("builtin"):
+        try:
+            return _run_builtin_tool(name, arguments)
+        except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
+            return f"Error running tool {name!r}: {exc}"
     call_args = dict(arguments)
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
