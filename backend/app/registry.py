@@ -299,7 +299,55 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         icon="📊",
         wired=False,
         oauth_provider="google",
-        oauth_scopes=['https://www.googleapis.com/auth/spreadsheets'],
+        oauth_scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    ),
+    CapabilityOption(
+        key="google_docs",
+        name="Google Docs",
+        description="Read, draft and edit Google Docs.",
+        icon="📝",
+        wired=False,
+        oauth_provider="google",
+        oauth_scopes=["https://www.googleapis.com/auth/documents"],
+    ),
+    CapabilityOption(
+        key="google_slides",
+        name="Google Slides",
+        description="Build and edit slide decks in Google Slides.",
+        icon="🖼️",
+        wired=False,
+        oauth_provider="google",
+        oauth_scopes=["https://www.googleapis.com/auth/presentations"],
+    ),
+    CapabilityOption(
+        key="google_drive",
+        name="Google Drive",
+        description="Find, open and save files in Google Drive.",
+        icon="📁",
+        wired=False,
+        oauth_provider="google",
+        # drive.file, not the full drive scope, and the difference matters:
+        # full Drive access is one of Google's RESTRICTED scopes, which needs
+        # an annual third-party security assessment before the app can be
+        # published. drive.file grants access only to files the agent itself
+        # creates or the user explicitly opens with it — enough for almost
+        # every agent, without the assessment.
+        oauth_scopes=["https://www.googleapis.com/auth/drive.file"],
+    ),
+    CapabilityOption(
+        key="google_classroom",
+        name="Google Classroom",
+        description="Look up courses, assignments and due dates in Google Classroom.",
+        icon="🎓",
+        wired=False,
+        oauth_provider="google",
+        # Read-only, and deliberately no roster scope: student rosters are
+        # restricted, and reading other people's coursework raises a consent
+        # question a demo shouldn't quietly answer for its users.
+        oauth_scopes=[
+            "https://www.googleapis.com/auth/classroom.courses.readonly",
+            "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+        ],
     ),
     CapabilityOption(
         key="notion",
