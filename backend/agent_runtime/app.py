@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import re
@@ -12,8 +13,9 @@ import jsonschema
 from croniter import croniter
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from mcp import ClientSession
+from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
+from mcp.client.stdio import stdio_client
 from pydantic import BaseModel
 
 WORKSPACE = Path("/workspace")
@@ -457,21 +459,52 @@ def _load_capabilities() -> list[dict]:
         return []
 
 
-async def _async_list_tools(mcp_url: str) -> list:
-    async with sse_client(mcp_url) as (read, write):
+@asynccontextmanager
+async def _mcp_session(capability: dict):
+    """An initialised MCP session for a capability, over whichever transport
+    it uses.
+
+    stdio means this container runs the server itself as a subprocess — which
+    is what lets an agent hold its OWN credential, since the process inherits
+    this agent's environment rather than a shared container's. sse means a
+    capability container shared across agents, still used for servers too
+    heavy or too stateful to run per agent.
+
+    The process is started and torn down around each use. That costs a spawn
+    per call, but keeps a wedged server from outliving the request that
+    wedged it, and matches how the SSE path already behaves."""
+    if capability.get("transport") == "stdio":
+        params = StdioServerParameters(
+            command=capability["command"],
+            args=capability.get("args") or [],
+            # Inherit this container's environment and layer the capability's
+            # own credential on top, so the subprocess sees exactly what it
+            # needs and nothing is shared between agents.
+            env={**os.environ, **(capability.get("env") or {})},
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
+        return
+
+    async with sse_client(capability["mcp_url"]) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.list_tools()
-            return result.tools
+            yield session
 
 
-async def _async_call_tool(mcp_url: str, name: str, arguments: dict) -> str:
-    async with sse_client(mcp_url) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(name, arguments)
-            parts = [block.text for block in result.content if getattr(block, "text", None)]
-            return "\n".join(parts) if parts else "(tool returned no output)"
+async def _async_list_tools(capability: dict) -> list:
+    async with _mcp_session(capability) as session:
+        result = await session.list_tools()
+        return result.tools
+
+
+async def _async_call_tool(capability: dict, name: str, arguments: dict) -> str:
+    async with _mcp_session(capability) as session:
+        result = await session.call_tool(name, arguments)
+        parts = [block.text for block in result.content if getattr(block, "text", None)]
+        return "\n".join(parts) if parts else "(tool returned no output)"
 
 
 # tool name -> {"mcp_url", "description", "input_schema"}, populated once at
@@ -489,7 +522,7 @@ async def _discover_tools() -> None:
     # inside its own asyncio.run(Server.serve()).
     for capability in _load_capabilities():
         try:
-            tools = await _async_list_tools(capability["mcp_url"])
+            tools = await _async_list_tools(capability)
         except Exception as exc:  # noqa: BLE001 - best-effort discovery, one bad server shouldn't break the rest
             print(f"[capabilities] could not reach {capability['key']}: {exc}")
             continue
@@ -505,7 +538,7 @@ async def _discover_tools() -> None:
                     r for r in input_schema.get("required", []) if r != key_param
                 ]
             _TOOL_INDEX[tool.name] = {
-                "mcp_url": capability["mcp_url"],
+                "capability": capability,
                 "description": tool.description or "",
                 "input_schema": input_schema,
                 "api_key_param": key_param,
@@ -596,7 +629,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:
-        result = asyncio.run(_async_call_tool(info["mcp_url"], name, call_args))
+        result = asyncio.run(_async_call_tool(info["capability"], name, call_args))
         ok = True
     except Exception as exc:  # noqa: BLE001 - surface the failure to the model, not a 500
         result = f"Error calling tool {name!r}: {exc}"

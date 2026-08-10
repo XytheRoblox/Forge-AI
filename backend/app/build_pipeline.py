@@ -9,7 +9,7 @@ import croniter
 import jsonschema
 from sqlmodel import Session, select
 
-from app import docker_manager, mcp_manager, webpage_gen, workspace
+from app import docker_manager, mcp_manager, registry, webpage_gen, workspace
 from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
@@ -145,11 +145,23 @@ def _run(job_id: str, agent_id: int) -> None:
 
         step = job.steps[2]
         step.status = "running"
+        # Two kinds of capability. Agent-hosted ones need nothing started here
+        # — the agent's own container spawns them as subprocesses once it's
+        # running — so they're recorded but never dialled. Shared ones still
+        # get a container brought up and health-checked before the agent that
+        # depends on them is built.
         capability_urls: dict[str, str] = {}
+        hosted: list[str] = []
         try:
             for key in agent.capability_keys:
                 capability = CAPABILITY_LOOKUP.get(key)
                 if capability is None or not capability.wired or not capability.mcp_server:
+                    continue
+                if registry.hosted_in_agent(key):
+                    # Placeholder URL: write_capabilities keys off the entry
+                    # existing, and emits a stdio launch spec instead of a URL.
+                    capability_urls[key] = ""
+                    hosted.append(key)
                     continue
                 step.detail = f"Starting {capability.name}…"
                 capability_urls[key] = mcp_manager.ensure_running(capability.mcp_server)
@@ -162,7 +174,13 @@ def _run(job_id: str, agent_id: int) -> None:
         }
         workspace.write_capabilities(agent, capability_urls, effective_keys)
         step.status = "success"
-        step.detail = f"Started: {', '.join(capability_urls)}" if capability_urls else "None needed."
+        shared = [k for k in capability_urls if k not in hosted]
+        parts = []
+        if shared:
+            parts.append(f"started {', '.join(shared)}")
+        if hosted:
+            parts.append(f"{', '.join(hosted)} run inside the agent")
+        step.detail = "; ".join(parts).capitalize() if parts else "None needed."
 
         step = job.steps[3]
         step.status = "running"

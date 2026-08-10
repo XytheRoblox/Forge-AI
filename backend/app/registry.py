@@ -23,6 +23,53 @@ def supports_vision(model_provider: str, model_id: str) -> bool:
     return model_id in NATIVE_VISION_MODEL_IDS
 
 
+
+# Capabilities the AGENT'S OWN container hosts, as stdio subprocesses, instead
+# of reaching a shared capability container over the network.
+#
+# This is the difference that makes per-agent credentials possible at all: a
+# shared container reads its key from its own environment once at startup, so
+# every agent using it necessarily shares one token. A subprocess inside the
+# agent's container gets that agent's environment, so each agent brings its
+# own. It also gives each agent a private /scratch instead of one volume
+# shared across every agent on the host, and removes a whole class of failure
+# where one capability crash-looping takes an unrelated agent's tools down.
+#
+# `key_env` names the environment variable the server expects its credential
+# in — the build pipeline resolves the agent's own key (or a platform key) and
+# passes it through workspace.write_capabilities.
+STDIO_SERVERS: dict[str, dict] = {
+    "filesystem": {
+        "command": "npx",
+        # Scoped to /scratch: the server takes its allowed roots as arguments,
+        # and handing it "/" would expose the agent's own source and secrets.
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/scratch"],
+    },
+    "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "key_env": "GITHUB_PERSONAL_ACCESS_TOKEN",
+    },
+    "sequential_thinking": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+    },
+    "fetch": {
+        "command": "python3",
+        "args": ["-m", "mcp_server_fetch"],
+    },
+    "time": {
+        "command": "python3",
+        "args": ["-m", "mcp_server_time"],
+    },
+}
+
+
+def hosted_in_agent(capability_key: str) -> bool:
+    """Whether this capability runs inside the agent's own container."""
+    return capability_key in STDIO_SERVERS
+
+
 MODEL_OPTIONS: list[ModelOption] = [
     # Every model here is served by Featherless and has been probed against
     # the live API to confirm it emits real, structured tool calls — that's

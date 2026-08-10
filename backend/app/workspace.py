@@ -2,7 +2,7 @@ import json
 import shutil
 from pathlib import Path
 
-from app.registry import CAPABILITY_OPTIONS
+from app.registry import CAPABILITY_OPTIONS, STDIO_SERVERS
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "agent_workspaces"
 
@@ -99,16 +99,30 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
     # by its capability's brand ("WolframAlpha 🧮") rather than by the raw MCP
     # tool identifier. registry is the single source of truth for both.
     meta = {c.key: c for c in CAPABILITY_OPTIONS}
-    entries = [
-        {
+    entries = []
+    for key, url in capability_urls.items():
+        entry = {
             "key": key,
-            "mcp_url": url,
             "api_key": effective_keys.get(key),
             "label": meta[key].name if key in meta else key,
             "icon": meta[key].icon if key in meta else "",
         }
-        for key, url in capability_urls.items()
-    ]
+        launch = STDIO_SERVERS.get(key)
+        if launch:
+            # Hosted by the agent itself: the runtime spawns this as a
+            # subprocess. The credential goes in as an env var for that
+            # process alone, which is what gives each agent its own.
+            entry["transport"] = "stdio"
+            entry["command"] = launch["command"]
+            entry["args"] = launch["args"]
+            env = {}
+            if launch.get("key_env") and effective_keys.get(key):
+                env[launch["key_env"]] = effective_keys[key]
+            entry["env"] = env
+        else:
+            entry["transport"] = "sse"
+            entry["mcp_url"] = url
+        entries.append(entry)
     path = workspace_dir(agent.id) / "capabilities.json"
     path.write_text(json.dumps(entries, indent=2))
 
