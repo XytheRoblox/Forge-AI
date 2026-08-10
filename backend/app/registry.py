@@ -425,9 +425,18 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         # Read-only, and deliberately no roster scope: student rosters are
         # restricted, and reading other people's coursework raises a consent
         # question a demo shouldn't quietly answer for its users.
+        #
+        # BOTH coursework scopes, because which one applies depends on the
+        # user's role in the course, not on what the agent is asked to do.
+        # `coursework.me` covers work assigned to you as a STUDENT; a teacher
+        # listing assignments in a course they own needs
+        # `coursework.students`. Requesting only the first makes the agent
+        # work for students and 403 for teachers — with an error that names
+        # permission rather than role, so it reads like a bug.
         oauth_scopes=[
             "https://www.googleapis.com/auth/classroom.courses.readonly",
             "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+            "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
         ],
     ),
     CapabilityOption(

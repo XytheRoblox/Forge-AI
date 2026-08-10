@@ -193,7 +193,21 @@ MAX_TOOL_ARGS_CHARS = 200
 # limit and fail the turn outright. The model gets the top of the result,
 # which is where the answer almost always is, plus a marker so it knows the
 # text was cut rather than assuming it saw everything.
-MAX_TOOL_RESULT_TO_MODEL = 12000
+MAX_TOOL_RESULT_TO_MODEL = 8000
+
+# Ceiling on the ENTIRE prompt, not any single part of it. Per-item caps are
+# not enough on their own: with ten tool rounds allowed, ten individually
+# reasonable results still add up past the window. Roughly 4 chars per token,
+# so ~22k tokens — deliberately well under a 32k limit, because the limit
+# covers the reply too, and an overshoot is a hard 400 rather than a
+# degradation.
+MAX_PROMPT_CHARS = int(os.environ.get("MAX_PROMPT_CHARS", "88000"))
+
+# What an older tool result is squeezed to when the prompt has to shrink. The
+# most recent results are what the model is actively reasoning about; earlier
+# ones usually only need to be remembered in outline.
+SHRUNK_TOOL_RESULT_CHARS = 700
+KEEP_FULL_TOOL_RESULTS = 2
 
 # Ceiling on replayed conversation. Transcripts only grow, so without this an
 # agent works fine for a week and then starts failing on every message with no
@@ -229,8 +243,11 @@ Before answering anything that takes more than one step, plan it out:
    and consistent with the situation described.
 
 Use a computational tool for the parts that are genuinely computational — evaluating an
-integral, solving an equation, arithmetic you could get wrong — and give it ONE well-posed
-sub-problem at a time, already reduced to symbols. Don't hand it the original word problem
+integral, solving an equation, arithmetic you could get wrong — and give each call ONE
+well-posed sub-problem, already reduced to symbols. One sub-problem per call is about how to
+pose a call, not how many you may make at once: sub-problems that don't depend on each other
+should be requested TOGETHER in a single step, and only chained when a later one genuinely
+needs an earlier result. Don't hand it the original word problem
 and hope: it can't see the setup you're carrying in your head, and a confident wrong answer
 to a badly-posed query is worse than no tool at all. Cite what you got back and carry it into
 the next step.
@@ -243,6 +260,26 @@ does not mean zero acceleration, and it does not mean the forces balance.
 
 If a tool's answer contradicts your own reasoning, don't just adopt it. Work out which is
 wrong and say so."""
+
+
+PLANNING_INSTRUCTIONS = """
+
+## Planning before acting
+You have a `sequentialthinking` tool. Use it at the START of any task needing more than one
+tool call, to think the whole approach through in one pass before touching anything else.
+
+In that plan, work out and name every call you intend to make, what each is for, and which
+of them depend on the results of others. Then act on the plan rather than re-deriving it:
+
+- Issue every independent call together in a single step. Four unrelated lookups are one
+  step, not four.
+- Chain a call after another only where it truly needs the earlier result.
+- Don't return to `sequentialthinking` after each result. Go back to it only when a result
+  genuinely invalidates the plan — a lookup that failed, or an answer that contradicts what
+  you assumed. Re-planning after every step is the slow, expensive habit this tool exists to
+  replace.
+
+Thinking is not free either: plan once, in as few thoughts as the problem honestly needs."""
 
 TOOL_LOG_INSTRUCTIONS = """
 
@@ -269,7 +306,13 @@ def _effective_system_prompt() -> str:
     # Reasoning guidance comes before the memory section: it's about how to
     # answer at all, which applies to every turn, whereas memory is context for
     # a particular one.
-    prompt = f"{base}{REASONING_INSTRUCTIONS}{MEMORY_INSTRUCTIONS}"
+    prompt = f"{base}{REASONING_INSTRUCTIONS}"
+    # Described only when the agent actually has it. Instructions for a tool
+    # that isn't attached invite the model to call something that doesn't
+    # exist and spend a round finding out.
+    if "sequentialthinking" in _TOOL_INDEX:
+        prompt += PLANNING_INSTRUCTIONS
+    prompt += MEMORY_INSTRUCTIONS
     memory = _load_memory()
     prompt += (
         f"\n\n## Agent memory (from prior sessions)\n{memory}"
@@ -320,6 +363,7 @@ class ChatRequest(BaseModel):
 
 
 class ToolUse(BaseModel):
+    round: int = 0
     name: str
     ok: bool
     icon: str = ""
@@ -367,6 +411,7 @@ _turn = threading.local()
 
 def _begin_turn() -> None:
     _turn.tools = []
+    _turn.round = 0
 
 
 # What a detail panel shows. Generous next to the tool log's 600 — this is
@@ -390,6 +435,11 @@ def _record_tool_use(name: str, ok: bool, arguments: dict, result: str) -> None:
         args = str(arguments)
     calls.append(
         {
+            # Which round of the tool loop this call belongs to. Calls sharing
+            # a round were issued together in one request, which is the
+            # difference between an agent that planned and one that is
+            # discovering its next step each time.
+            "round": getattr(_turn, "round", 0),
             "name": info.get("label") or _pretty_tool(name),
             "icon": info.get("icon") or "",
             "key": info.get("capability_key") or "",
@@ -648,6 +698,49 @@ def _trim_history(history: list[dict]) -> list[dict]:
     return list(reversed(kept))
 
 
+def _message_size(message: dict) -> int:
+    size = len(str(message.get("content") or ""))
+    for call in message.get("tool_calls") or []:
+        size += len(json.dumps(call))
+    return size
+
+
+def _fit_to_budget(messages: list[dict]) -> list[dict]:
+    """Bring a conversation under MAX_PROMPT_CHARS, losing the least useful
+    material first.
+
+    Order matters. Older tool output is shrunk before anything is dropped,
+    because a scraped page the model has already summarised is the cheapest
+    thing to lose. Only if that isn't enough are whole turns dropped from the
+    front — and never the system prompt or the newest turn, which are what the
+    reply is actually built from.
+
+    Returning something slightly over budget is better than returning
+    something incoherent, so this stops rather than stripping the request bare.
+    """
+    total = sum(_message_size(m) for m in messages)
+    if total <= MAX_PROMPT_CHARS:
+        return messages
+
+    trimmed = [dict(m) for m in messages]
+    tool_positions = [i for i, m in enumerate(trimmed) if m.get("role") == "tool"]
+    for i in tool_positions[:-KEEP_FULL_TOOL_RESULTS] if KEEP_FULL_TOOL_RESULTS else tool_positions:
+        content = str(trimmed[i].get("content") or "")
+        if len(content) > SHRUNK_TOOL_RESULT_CHARS:
+            trimmed[i]["content"] = _clip(content, SHRUNK_TOOL_RESULT_CHARS)
+    total = sum(_message_size(m) for m in trimmed)
+    if total <= MAX_PROMPT_CHARS:
+        return trimmed
+
+    # Still too big: drop the oldest turns. Index 0 is the system prompt and
+    # the last message is the live one, so both stay.
+    head, tail = trimmed[0], trimmed[-1]
+    middle = trimmed[1:-1]
+    while middle and total > MAX_PROMPT_CHARS:
+        total -= _message_size(middle.pop(0))
+    return [head, *middle, tail]
+
+
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
@@ -727,7 +820,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
         narration: list[str] = []
 
         def _call_groq(use_tools: bool):
-            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
+            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": _fit_to_budget(messages)}
             if use_tools and tools:
                 kwargs["tools"] = tools
             return client.chat.completions.create(**kwargs)
@@ -737,6 +830,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # After a tool call the model is reasoning about what came back.
             # Saying "Thinking…" again makes the tool name flash past and
             # vanish, which reads as though the call was abandoned.
+            _turn.round = round_index
             _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
             try:
                 response = _call_groq(use_tools=True)
@@ -842,8 +936,9 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # After a tool call the model is reasoning about what came back.
             # Saying "Thinking…" again makes the tool name flash past and
             # vanish, which reads as though the call was abandoned.
+            _turn.round = round_index
             _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
-            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
+            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": _fit_to_budget(messages)}
             if tools:
                 kwargs["tools"] = tools
             response = client.chat.completions.create(**kwargs)
@@ -906,7 +1001,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         _set_status("Writing the answer…")
         response = client.chat.completions.create(
-            model=MODEL_ID, max_tokens=2048, messages=messages
+            model=MODEL_ID, max_tokens=2048, messages=_fit_to_budget(messages)
         )
         return _strip_thinking(response.choices[0].message.content or "")
 
