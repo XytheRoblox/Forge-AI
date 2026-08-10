@@ -16,7 +16,6 @@ GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
 GCP_ARTIFACT_REPO = os.environ.get("GCP_ARTIFACT_REPO", "forge")
 
 PROVIDER_ENV_VAR = {
-    "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
     "featherless": "FEATHERLESS_API_KEY",
 }

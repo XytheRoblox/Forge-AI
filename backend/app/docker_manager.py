@@ -14,7 +14,6 @@ CONTAINER_PORT = 8080
 NETWORK_NAME = "forge-net"
 
 PROVIDER_ENV_VAR = {
-    "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
     "featherless": "FEATHERLESS_API_KEY",
 }

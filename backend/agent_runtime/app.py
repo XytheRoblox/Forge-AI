@@ -37,8 +37,8 @@ MAX_TOOL_ITERATIONS = 5
 # entirely (the model should never see or have to fill in an API key).
 CAPABILITY_KEY_PARAM = {"wolfram_alpha": "app_id"}
 
-MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "anthropic")
-MODEL_ID = os.environ.get("MODEL_ID", "claude-sonnet-5")
+MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "featherless")
+MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-72B-Instruct")
 
 # Whether this agent's OWN model can accept image input natively. Decided by
 # the backend at deploy time (registry.py is the source of truth) rather than
@@ -58,7 +58,7 @@ MODEL_SUPPORTS_VISION = os.environ.get("MODEL_SUPPORTS_VISION") == "1"
 # vision model can transiently answer "busy"/"at capacity" — falling back down
 # the size ladder keeps image support working instead of failing the turn.
 # These are all open-weight Qwen VL models running on the platform's existing
-# Featherless plan: no Anthropic/OpenAI call, and no extra paid subscription.
+# Featherless plan: no extra paid subscription, and no third-party API.
 VISION_SIDECAR_MODELS = [
     m.strip()
     for m in os.environ.get(
@@ -82,20 +82,7 @@ NEXT_SECTION_HEADER = "\n## "
 
 app = FastAPI(title="Forge Agent Runtime")
 
-_anthropic_client = None
 _groq_client = None
-
-
-def _get_anthropic():
-    global _anthropic_client
-    if _anthropic_client is None:
-        from anthropic import Anthropic
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set in this container.")
-        _anthropic_client = Anthropic(api_key=api_key)
-    return _anthropic_client
 
 
 def _get_groq():
@@ -341,44 +328,7 @@ def _strip_thinking(text: str) -> str:
 
 
 def _generate_reply(system_prompt: str, history: list[dict]) -> str:
-    if MODEL_PROVIDER == "anthropic":
-        client = _get_anthropic()
-        tools = [
-            {"name": name, "description": info["description"], "input_schema": info["input_schema"]}
-            for name, info in _TOOL_INDEX.items()
-        ]
-        messages = list(history)
-
-        for _ in range(MAX_TOOL_ITERATIONS):
-            _set_status(f"Asking {MODEL_ID}…")
-            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "system": system_prompt, "messages": messages}
-            if tools:
-                kwargs["tools"] = tools
-            response = client.messages.create(**kwargs)
-
-            if response.stop_reason != "tool_use":
-                _set_status("Writing a reply…")
-                return "".join(b.text for b in response.content if b.type == "text").strip()
-
-            messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
-            tool_results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                _set_status(f"Using {block.name}…")
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": _execute_tool(block.name, block.input)}
-                )
-            messages.append({"role": "user", "content": tool_results})
-
-        # Ran out of tool-use rounds — ask once more without tools to force a final answer.
-        _set_status("Writing a final answer…")
-        response = client.messages.create(
-            model=MODEL_ID, max_tokens=2048, system=system_prompt, messages=messages
-        )
-        return "".join(b.text for b in response.content if b.type == "text").strip()
-
-    elif MODEL_PROVIDER == "groq":
+    if MODEL_PROVIDER == "groq":
         from groq import BadRequestError
 
         client = _get_groq()
@@ -552,10 +502,8 @@ def _describe_image(image: ChatImage) -> str:
 def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict]:
     """Attaches an uploaded image to the last (newest) user message.
 
-    A natively vision-capable model gets the real image, in whichever shape its
-    provider expects — Anthropic wants a multi-part content list with an
-    embedded base64 image block, Featherless wants an OpenAI-style `image_url`
-    part with a data URI.
+    A natively vision-capable model gets the real image as an OpenAI-style
+    `image_url` part with a data URI.
 
     Every other model gets the vision sidecar's written description of the
     image spliced in as plain text, so a text-only agent can still answer
@@ -566,13 +514,6 @@ def _attach_image_to_history(history: list[dict], image: ChatImage) -> list[dict
         return history
 
     text = history[-1]["content"]
-
-    if MODEL_SUPPORTS_VISION and MODEL_PROVIDER == "anthropic":
-        content = [
-            {"type": "image", "source": {"type": "base64", "media_type": image.media_type, "data": image.data}},
-            {"type": "text", "text": text},
-        ]
-        return history[:-1] + [{"role": "user", "content": content}]
 
     if MODEL_SUPPORTS_VISION and MODEL_PROVIDER == "featherless":
         content = [
@@ -609,7 +550,7 @@ def chat(payload: ChatRequest):
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:  # noqa: BLE001 - provider SDKs raise their own exception
-            # hierarchies (anthropic.AuthenticationError, groq.APIError, ...), none of
+            # hierarchies (openai.AuthenticationError, groq.APIError, ...), none of
             # which are RuntimeError — surface them as a real, readable JSON error
             # instead of letting them fall through to an unhandled-exception response.
             raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")

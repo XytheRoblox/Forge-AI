@@ -17,15 +17,10 @@ NATIVE_VISION_MODEL_IDS = {
     "Qwen/Qwen2.5-VL-7B-Instruct",
 }
 
-# Providers whose whole current lineup takes image input, so individual model
-# IDs don't have to be enumerated.
-NATIVE_VISION_PROVIDERS = {"anthropic"}
-
-
 def supports_vision(model_provider: str, model_id: str) -> bool:
     """Whether this model can be handed a raw image, rather than needing the
     vision sidecar to describe it first."""
-    return model_provider in NATIVE_VISION_PROVIDERS or model_id in NATIVE_VISION_MODEL_IDS
+    return model_id in NATIVE_VISION_MODEL_IDS
 
 
 MODEL_OPTIONS: list[ModelOption] = [

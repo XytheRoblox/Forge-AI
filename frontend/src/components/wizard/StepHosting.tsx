@@ -6,7 +6,7 @@ const OPTIONS = [
     title: "API-hosted",
     available: true,
     description:
-      "Your agent runs as its own Docker container on this machine. When deployed, it calls your chosen model's API (Anthropic or Groq) over the network for every reply.",
+      "Your agent runs as its own Docker container on this machine. When deployed, it calls your chosen model's API over the network for every reply.",
     details: [
       "Spins up a dedicated container per agent",
       "Needs an API key for the model provider you picked",
