@@ -81,6 +81,30 @@
     border-radius: 8px;
     margin-bottom: 6px;
   }
+  /* A generated image is the answer, not an attachment to it, so it gets its
+     own block rather than sitting inline with the sentence around it. */
+  .desmos-graph {
+    width: 100%;
+    height: 320px;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .desmos-missing {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: normal;
+  }
+  .msg img.gen-image {
+    display: block;
+    margin: 8px 0;
+    max-width: min(100%, 420px);
+    border: 1px solid var(--border);
+  }
   .msg code {
     background: rgba(0, 0, 0, 0.08);
     padding: 1px 5px;
@@ -419,6 +443,10 @@
     options: { enableMenu: false },
   };
 </script>
+<!-- Desmos, when a key is configured. Injected at build time rather than
+     hardcoded: it's the platform's key, and a page built without one simply
+     omits the script instead of loading a URL that will be rejected. -->
+__DESMOS_SCRIPT__
 <script
   defer
   id="MathJax-script"
@@ -520,7 +548,27 @@
         .replace(/\\\(([\s\S]+?)\\\)/g, (m, t) => stash(t, false))
         .replace(/\$([^$\n]+?)\$/g, (m, t) => stash(t, false));
 
+      // Pulled out before anything else, like maths: the block is JSON and
+      // the markdown passes would mangle its braces and backslashes.
+      const graphs = [];
+      s = s.replace(/```desmos\s*([\s\S]*?)```/g, (m, body) => {
+        graphs.push(body.trim());
+        return "\u0002G" + (graphs.length - 1) + "\u0002";
+      });
+
       s = escapeHtml(s);
+
+      // Markdown images, before emphasis — a generated image arrives as
+      // ![prompt](url), and leaving it as text would show the user a raw link
+      // to something the agent just made for them. Only http(s) is accepted:
+      // a javascript: or data: URL here would be model output becoming a
+      // script or an inline payload.
+      s = s.replace(
+        /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+        (m, alt, url) =>
+          '<img class="gen-image" src="' + url.replace(/"/g, "&quot;") +
+          '" alt="' + alt.replace(/"/g, "&quot;") + '" loading="lazy" />'
+      );
 
       // bold, italic, inline code
       s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -533,6 +581,10 @@
       // Put the math back as inert spans carrying their own source, so
       // typesetMath can render them — and re-render them later if KaTeX
       // finishes loading after the message was already on screen.
+      s = s.replace(/\u0002G(\d+)\u0002/g, (m, i) =>
+        '<pre class="desmos-spec">' + escapeHtml(graphs[Number(i)]) + "</pre>"
+      );
+
       s = s.replace(/\u0001M(\d+)\u0001/g, (m, i) => {
         const item = math[Number(i)];
         return (
@@ -544,6 +596,41 @@
         );
       });
       return s;
+    }
+
+    // Turns a ```desmos fenced block into a live calculator. Done after the
+    // message is in the DOM because Desmos measures its container, so it can't
+    // be built inside a detached node.
+    function renderDesmos(root) {
+      root.querySelectorAll("pre.desmos-spec").forEach((node) => {
+        let spec;
+        try {
+          spec = JSON.parse(node.textContent);
+        } catch (e) {
+          return; // leave the raw block visible rather than swallowing it
+        }
+        const holder = document.createElement("div");
+        holder.className = "desmos-graph";
+        if (!window.Desmos) {
+          // No key configured, or the script failed. Say so plainly instead
+          // of leaving an empty box the user can't interpret.
+          holder.className = "desmos-missing";
+          holder.textContent =
+            "Graphing isn't configured on this platform: " + spec.expressions.join(", ");
+          node.replaceWith(holder);
+          return;
+        }
+        node.replaceWith(holder);
+        const calc = window.Desmos.GraphingCalculator(holder, {
+          expressions: true,
+          settingsMenu: false,
+          zoomButtons: true,
+          border: false,
+        });
+        spec.expressions.forEach((latex, i) =>
+          calc.setExpression({ id: "e" + i, latex })
+        );
+      });
     }
 
     function typesetMath(root) {
@@ -713,6 +800,8 @@
       }
 
       messagesEl.appendChild(div);
+      // After insertion: Desmos sizes itself from its container.
+      renderDesmos(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
     }

@@ -2,6 +2,7 @@ import base64
 import html as html_lib
 import json
 import mimetypes
+import os
 from pathlib import Path
 
 from app import llm_client
@@ -98,5 +99,17 @@ def generate_webpage(agent, themed: bool = True) -> tuple[str, dict]:
     # `<` keeps a data URI from ever closing the script tag early.
     logos = json.dumps(_tool_logos()).replace("<", "\\u003c")
     html = html.replace("__TOOL_LOGOS__", logos, 1)
+
+    # Desmos is loaded only when a key exists. The key is a browser-side one
+    # by design (Desmos has no server API), but it's still configuration
+    # rather than something to hardcode into every generated page.
+    desmos_key = os.environ.get("DESMOS_API_KEY", "").strip()
+    desmos_tag = (
+        '<script defer src="https://www.desmos.com/api/v1.10/calculator.js'
+        f'?apiKey={html_lib.escape(desmos_key, quote=True)}"></script>'
+        if desmos_key
+        else "<!-- DESMOS_API_KEY not set: graphing is unavailable -->"
+    )
+    html = html.replace("__DESMOS_SCRIPT__", desmos_tag, 1)
 
     return html, theme

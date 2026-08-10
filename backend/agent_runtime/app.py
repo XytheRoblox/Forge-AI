@@ -439,6 +439,7 @@ _turn = threading.local()
 def _begin_turn() -> None:
     _turn.tools = []
     _turn.round = 0
+    _turn.attachments = []
 
 
 # What a detail panel shows. Generous next to the tool log's 600 — this is
@@ -483,6 +484,51 @@ def _record_tool_use(name: str, ok: bool, arguments: dict, result: str) -> None:
 
 def _turn_tools() -> list[dict]:
     return list(getattr(_turn, "tools", []) or [])
+
+
+# Markdown images a tool produced this turn. A generated image is the ANSWER,
+# but the model routinely describes it instead of repeating the markdown —
+# "Here's a textbook-style illustration…" with no illustration. Whether the
+# user sees what was made shouldn't depend on the model choosing to quote a
+# URL, so anything a tool rendered is re-attached to the reply if it's missing.
+_MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+_RENDERABLE_BLOCK = re.compile(r"```(?:desmos)\s*[\s\S]*?```")
+
+
+def _collect_attachments(result: str) -> None:
+    """Remember anything a tool produced that the page can RENDER.
+
+    A generated image or a graph spec is the answer itself, not a description
+    of one — but the model routinely paraphrases instead of repeating it
+    ("Here's a textbook-style illustration…", with no illustration). Whether
+    the user sees what was made shouldn't depend on the model choosing to
+    quote it back."""
+    holder = getattr(_turn, "attachments", None)
+    if holder is None:
+        return
+    for pattern in (_MARKDOWN_IMAGE, _RENDERABLE_BLOCK):
+        for match in pattern.finditer(result or ""):
+            if match.group(0) not in holder:
+                holder.append(match.group(0))
+
+
+def _fingerprint(attachment: str) -> str:
+    """The part of an attachment that identifies it inside a reply — the URL
+    for an image, the whole block otherwise."""
+    if attachment.startswith("!["):
+        return attachment.split("](", 1)[-1].rstrip(")")
+    return attachment
+
+
+def _with_attachments(reply: str) -> str:
+    missing = [
+        attachment
+        for attachment in getattr(_turn, "attachments", []) or []
+        if _fingerprint(attachment) not in reply
+    ]
+    if not missing:
+        return reply
+    return "\n\n".join([reply.strip(), *missing]).strip()
 
 
 def _tool_label(name: str) -> str:
@@ -768,6 +814,55 @@ def _fit_to_budget(messages: list[dict]) -> list[dict]:
     return [head, *middle, tail]
 
 
+def _fill_required_defaults(schema: dict, arguments: dict) -> dict:
+    """Supply required arguments the model left out, where a safe value exists.
+
+    Models routinely omit required booleans and counters — sequentialthinking
+    wants nextThoughtNeeded/thoughtNumber/totalThoughts and frequently sends
+    only the thought. The server rejects the call, the round is wasted, and
+    the user sees the model apologising to itself mid-answer.
+
+    Only ever fills with the schema's own default or a falsy value of the
+    declared type. That's deliberately conservative: an omitted flag becomes
+    false rather than true, so nothing is enabled on the model's behalf, and a
+    guess can't turn a read into a write.
+    """
+    properties = (schema or {}).get("properties") or {}
+    required = list((schema or {}).get("required") or [])
+
+    # Booleans are filled whether or not the schema calls them required,
+    # because a server's own validator can be stricter than the schema it
+    # publishes. sequentialthinking is exactly that: `required` omits
+    # nextThoughtNeeded, and the server then rejects the call for missing it.
+    # A flag the model didn't set is false either way, so supplying it changes
+    # nothing except whether the call succeeds.
+    required += [
+        key
+        for key, spec in properties.items()
+        if (spec or {}).get("type") == "boolean" and key not in required
+    ]
+
+    filled = dict(arguments)
+    for key in required:
+        if key in filled and filled[key] is not None:
+            continue
+        spec = properties.get(key) or {}
+        if "default" in spec:
+            filled[key] = spec["default"]
+            continue
+        blank = {
+            "boolean": False,
+            "integer": 1,
+            "number": 1,
+            "string": "",
+            "array": [],
+            "object": {},
+        }
+        if spec.get("type") in blank:
+            filled[key] = blank[spec["type"]]
+    return filled
+
+
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
@@ -775,7 +870,9 @@ def _execute_tool(name: str, arguments: dict) -> str:
         return f"Error: unknown tool {name!r}"
     if info.get("builtin"):
         try:
-            result = _run_builtin_tool(name, arguments)
+            result = _run_builtin_tool(
+                name, _fill_required_defaults(info.get("input_schema") or {}, arguments)
+            )
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
             result = f"Error running tool {name!r}: {exc}"
         builtin_ok = not result.startswith("Error")
@@ -783,7 +880,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
         if builtin_ok:
             _log_tool_call(name, arguments, result)
         return result
-    call_args = dict(arguments)
+    call_args = _fill_required_defaults(info.get("input_schema") or {}, arguments)
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:
@@ -798,6 +895,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
     # retrying it unchanged. The API key is deliberately taken from
     # `arguments`, not `call_args`, so an injected secret never lands on disk.
     _record_tool_use(name, ok=ok, arguments=arguments, result=result)
+    _collect_attachments(result)
     # Only successes are persisted. A failure is still visible to the model
     # for the rest of THIS turn (it's in the conversation), which is what stops
     # a retry loop — but writing it to the durable log made a transient or
@@ -1153,7 +1251,7 @@ def chat(payload: ChatRequest):
             raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
     finally:
         _set_status("idle")
-    return ChatResponse(reply=reply, tools=[ToolUse(**t) for t in _turn_tools()])
+    return ChatResponse(reply=_with_attachments(reply), tools=[ToolUse(**t) for t in _turn_tools()])
 
 
 class CacheUpdateRequest(BaseModel):

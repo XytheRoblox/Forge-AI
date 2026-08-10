@@ -62,6 +62,14 @@ STDIO_SERVERS: dict[str, dict] = {
         "command": "python3",
         "args": ["-m", "mcp_server_time"],
     },
+    "image_generation": {
+        "command": "python3",
+        "args": ["/app/image_server.py"],
+    },
+    "desmos": {
+        "command": "python3",
+        "args": ["/app/desmos_server.py"],
+    },
 }
 
 # Every Google capability is served by one process. It's handed the agent's
@@ -295,6 +303,17 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
     # couldn't see, which stopped being true and only produced agents with the
     # attach button mysteriously missing.
     CapabilityOption(
+        key="desmos",
+        name="Desmos Graphing",
+        description=(
+            "Plot equations on an interactive Desmos graph the user can zoom, pan and trace — "
+            "far more useful than describing a curve in words."
+        ),
+        icon="📈",
+        wired=True,
+        mcp_server="desmos",
+    ),
+    CapabilityOption(
         key="time",
         name="Time",
         description="Get the current time in any timezone, or convert a time between timezones.",
@@ -406,13 +425,17 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         wired=True,
         mcp_server="google",
         oauth_provider="google",
-        # drive.file, not the full drive scope, and the difference matters:
-        # full Drive access is one of Google's RESTRICTED scopes, which needs
-        # an annual third-party security assessment before the app can be
-        # published. drive.file grants access only to files the agent itself
-        # creates or the user explicitly opens with it — enough for almost
-        # every agent, without the assessment.
-        oauth_scopes=["https://www.googleapis.com/auth/drive.file"],
+        # drive.file covers only files the agent itself created, so Drive
+        # answers 404 — not 403 — for anything else, including a teacher's
+        # Classroom attachment. Reading files the user already has requires
+        # drive.readonly, which is one of Google's RESTRICTED scopes: fine
+        # while the app is in Testing, but publishing it needs an annual
+        # third-party security assessment. Both are requested so an agent can
+        # write its own files and read the user's.
+        oauth_scopes=[
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
     ),
     CapabilityOption(
         key="google_classroom",
@@ -508,9 +531,10 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
     CapabilityOption(
         key="image_generation",
         name="Image Generation",
-        description="Generate images from a text prompt.",
+        description="Generate images from a text description — diagrams, illustrations, mock-ups. No API key needed.",
         icon="🎨",
-        wired=False,
+        wired=True,
+        mcp_server="image_generation",
     ),
     CapabilityOption(
         key="discord",

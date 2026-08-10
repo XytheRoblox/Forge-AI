@@ -13,6 +13,7 @@ matters beyond tidiness: a model offered a tool it can't legally call will try
 it, and spend a turn discovering the failure.
 """
 
+import base64
 import json
 import os
 import time
@@ -276,6 +277,107 @@ if "google_sheets" in ENABLED:
 
 # ------------------------------------------------------------------ Drive
 
+
+# --- Seeing files, not just parsing them --------------------------------
+#
+# A maths packet is typically a scan: a PDF whose pages are images with no
+# text layer, so extraction returns nothing and the agent concludes the file
+# is empty. The same vision models the runtime uses for chat uploads can read
+# those pages. This process inherits FEATHERLESS_API_KEY from the agent's
+# container, so it can call them directly.
+#
+# Nothing is written to disk: bytes are fetched into memory, rendered, sent,
+# and dropped when the call returns. The agent keeps the transcription, not
+# the file.
+
+VISION_MODELS = [
+    m.strip()
+    for m in os.environ.get(
+        "VISION_SIDECAR_MODELS",
+        "Qwen/Qwen2.5-VL-72B-Instruct,Qwen/Qwen2.5-VL-32B-Instruct,Qwen/Qwen2.5-VL-7B-Instruct",
+    ).split(",")
+    if m.strip()
+]
+# Pages are read one at a time and concatenated; beyond this a long document
+# takes minutes and overruns the reply budget anyway.
+MAX_VISION_PAGES = 8
+TRANSCRIBE_PROMPT = (
+    "Transcribe this page completely and exactly. Include every question, its number, all "
+    "mathematical expressions (write them in LaTeX), any instructions, and any text inside "
+    "diagrams. Do not solve anything, summarise, or comment - transcribe only."
+)
+
+
+def _read_image(data: bytes, media_type: str, prompt: str = TRANSCRIBE_PROMPT) -> str:
+    """Read an image with a vision model, trying each in turn.
+
+    Featherless is serverless and any single model can answer "busy", so
+    falling down the list keeps a readable file from looking unreadable."""
+    api_key = os.environ.get("FEATHERLESS_API_KEY")
+    if not api_key:
+        raise RuntimeError("No vision model is configured, so this agent can't read images.")
+    data_uri = f"data:{media_type};base64,{base64.b64encode(data).decode()}"
+    last = ""
+    for model in VISION_MODELS:
+        try:
+            resp = httpx.post(
+                "https://api.featherless.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": model,
+                    "max_tokens": 1500,
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                        {"type": "text", "text": prompt},
+                    ]}],
+                },
+                timeout=180.0,
+            )
+        except httpx.HTTPError as exc:
+            last = str(exc)
+            continue
+        if resp.status_code == 200:
+            text = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+            if text:
+                return text
+        last = resp.text[:120]
+    raise RuntimeError(f"Every vision model failed to read this image ({last})")
+
+
+def _pdf_to_text(raw: bytes, name: str) -> str:
+    """PDF text: extracted where there's a text layer, read visually where not."""
+    extracted = ""
+    try:
+        import io
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(raw))
+        extracted = "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception:  # noqa: BLE001 - fall through to reading it visually
+        extracted = ""
+
+    # A scan yields a few stray characters at most. Treating that as "the
+    # content" is what makes an agent answer confidently about a document it
+    # never actually read.
+    if len(extracted) > 200:
+        return extracted
+
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(stream=raw, filetype="pdf")
+    total = doc.page_count
+    pages = []
+    for index, page in enumerate(doc[:MAX_VISION_PAGES]):
+        # 2x scale (~144dpi): enough for small print and subscripts without
+        # producing an image too large to send.
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        pages.append(f"--- page {index + 1} ---\n" + _read_image(pixmap.tobytes("png"), "image/png"))
+    doc.close()
+    if not pages:
+        return ""
+    note = f"\n\n(Read the first {MAX_VISION_PAGES} of {total} pages.)" if total > MAX_VISION_PAGES else ""
+    return f"[{name} has no text layer, so its pages were read visually.]\n\n" + "\n\n".join(pages) + note
+
 if "google_drive" in ENABLED:
 
     @mcp.tool()
@@ -302,14 +404,15 @@ if "google_drive" in ENABLED:
 
     @mcp.tool()
     def read_drive_file(file_id: str, max_chars: int = 12000) -> str:
-        """Read the text of a Drive file — a Google Doc, or a PDF attachment
-        such as one attached to a Classroom assignment.
+        """Read a Drive file: a Google Doc, a PDF, or an image.
 
-        Use the file_id reported by list_coursework or find_drive_files."""
+        Handles scanned PDFs and pictures by looking at them with a vision
+        model, so a packet that is photographs of pages still comes back as
+        text. Use the file_id reported by list_coursework or find_drive_files."""
         meta = _call(
             "GET",
             f"https://www.googleapis.com/drive/v3/files/{file_id}",
-            params={"fields": "id,name,mimeType"},
+            params={"fields": "id,name,mimeType,size"},
         )
         mime = meta.get("mimeType", "")
         name = meta.get("name", file_id)
@@ -317,47 +420,40 @@ if "google_drive" in ENABLED:
         if mime.startswith("application/vnd.google-apps."):
             # Native Google formats have no bytes to download; they're exported.
             export = "text/plain" if "document" in mime else "text/csv"
-            url = f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
             resp = httpx.get(
-                url,
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
                 params={"mimeType": export},
                 headers={"Authorization": f"Bearer {_access_token()}"},
-                timeout=60.0,
+                timeout=90.0,
             )
             if resp.status_code >= 400:
                 raise RuntimeError(f"Could not export '{name}': {resp.text[:150]}")
-            text = resp.text
+            text = resp.text.strip()
         else:
             resp = httpx.get(
                 f"https://www.googleapis.com/drive/v3/files/{file_id}",
                 params={"alt": "media"},
                 headers={"Authorization": f"Bearer {_access_token()}"},
-                timeout=60.0,
+                timeout=120.0,
                 follow_redirects=True,
             )
             if resp.status_code >= 400:
                 raise RuntimeError(f"Could not download '{name}': {resp.text[:150]}")
+            raw = resp.content
             if mime == "application/pdf" or name.lower().endswith(".pdf"):
-                try:
-                    import io
-
-                    from pypdf import PdfReader
-
-                    reader = PdfReader(io.BytesIO(resp.content))
-                    text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
-                except Exception as exc:  # noqa: BLE001 - report, don't crash the turn
-                    raise RuntimeError(f"Could not read the PDF '{name}': {exc}")
+                text = _pdf_to_text(raw, name)
+            elif mime.startswith("image/"):
+                text = f"[{name} is an image, read visually.]\n\n" + _read_image(raw, mime)
             else:
                 try:
-                    text = resp.content.decode("utf-8")
+                    text = raw.decode("utf-8").strip()
                 except UnicodeDecodeError:
                     raise RuntimeError(
-                        f"'{name}' is a {mime} file, which this agent can't read as text."
+                        f"'{name}' is a {mime} file, which this agent can't read."
                     )
 
-        text = text.strip()
         if not text:
-            return f"'{name}' opened but contained no extractable text (it may be scanned images)."
+            return f"'{name}' opened but no text could be read from it."
         if len(text) > max_chars:
             return f"{name} (first {max_chars} characters):\n\n{text[:max_chars]}"
         return f"{name}:\n\n{text}"
