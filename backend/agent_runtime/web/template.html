@@ -109,6 +109,17 @@
   .msg .frac-den {
     padding: 0 3px;
   }
+  /* KaTeX sets its own colour; inherit the bubble's instead so math doesn't
+     go black on a dark theme. Display math gets its own scroller — a long
+     equation must never widen the page. */
+  .msg .katex { color: inherit; font-size: 1.05em; }
+  .msg .katex-display {
+    margin: 6px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+  .msg .math { white-space: normal; }
   .msg.typing {
     gap: 6px;
   }
@@ -239,6 +250,23 @@
 <style>
   __AGENT_THEME_CSS__
 </style>
+<!-- Real math typesetting. Loaded from a CDN rather than vendored into the
+     agent image: the alternative is shipping KaTeX's fonts in every agent
+     container, and the page already can't do anything useful without network.
+     Both tags are optional by design — if they fail to load, renderRichText's
+     own macro substitution still runs, so math degrades to approximate rather
+     than raw source. -->
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+  crossorigin="anonymous"
+/>
+<script
+  defer
+  src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+  crossorigin="anonymous"
+  onload="document.dispatchEvent(new Event('katex-ready'))"
+></script>
 </head>
 <body data-image-upload="__IMAGE_UPLOAD_ENABLED__">
   <header>
@@ -300,36 +328,81 @@
       rightarrow: "→", leftarrow: "←", sum: "∑", int: "∫", partial: "∂",
     };
 
-    function renderRichText(raw) {
-      let html = escapeHtml(raw);
-
-      // Strip math delimiters, keep their contents for the rules below.
-      html = html.replace(/\$\$([\s\S]+?)\$\$/g, "$1");
-      html = html.replace(/\$([^$\n]+?)\$/g, "$1");
-      html = html.replace(/\\\[([\s\S]+?)\\\]/g, "$1");
-      html = html.replace(/\\\(([\s\S]+?)\\\)/g, "$1");
-
-      // \frac{a}{b}
+    // Approximate math, used when KaTeX isn't available and for expressions
+    // written without delimiters at all (models frequently just type x^2).
+    function approximateMath(html) {
       html = html.replace(
         /\\frac\{([^{}]+)\}\{([^{}]+)\}/g,
         '<span class="frac"><span class="frac-num">$1</span><span class="frac-den">$2</span></span>'
       );
-      // \sqrt{x}
       html = html.replace(/\\sqrt\{([^{}]+)\}/g, "√($1)");
-      // greek letters + common symbol macros
       html = html.replace(/\\([A-Za-z]+)/g, (m, name) => GREEK[name] || SYMBOLS[name] || m);
-
-      // bold, italic, inline code
-      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-      html = html.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
-      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-      // superscripts: ^{...} or ^word
       html = html.replace(/\^\{([^{}]+)\}/g, "<sup>$1</sup>");
       html = html.replace(/\^(-?\w+)/g, "<sup>$1</sup>");
-
+      html = html.replace(/_\{([^{}]+)\}/g, "<sub>$1</sub>");
+      html = html.replace(/_(-?\w+)/g, "<sub>$1</sub>");
       return html;
     }
+
+    // Math is pulled out BEFORE anything else touches the string. The markdown
+    // passes below would otherwise eat parts of it — \times becomes ×, a ^ in
+    // an exponent becomes <sup>, and `*` inside a matrix reads as emphasis —
+    // and KaTeX needs the original source, not a half-substituted version.
+    function renderRichText(raw) {
+      const math = [];
+      const stash = (tex, display) => "\u0001M" + (math.push({ tex, display }) - 1) + "\u0001";
+
+      let s = String(raw)
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => stash(t, true))
+        .replace(/\\\[([\s\S]+?)\\\]/g, (m, t) => stash(t, true))
+        .replace(/\\\(([\s\S]+?)\\\)/g, (m, t) => stash(t, false))
+        .replace(/\$([^$\n]+?)\$/g, (m, t) => stash(t, false));
+
+      s = escapeHtml(s);
+
+      // bold, italic, inline code
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      s = s.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+      s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+      // Undelimited math in ordinary prose still gets the approximate pass.
+      s = approximateMath(s);
+
+      // Put the math back as inert spans carrying their own source, so
+      // typesetMath can render them — and re-render them later if KaTeX
+      // finishes loading after the message was already on screen.
+      s = s.replace(/\u0001M(\d+)\u0001/g, (m, i) => {
+        const item = math[Number(i)];
+        return (
+          '<span class="math" data-display="' +
+          (item.display ? "1" : "0") +
+          '" data-tex="' +
+          escapeHtml(item.tex).replace(/"/g, "&quot;") +
+          '"></span>'
+        );
+      });
+      return s;
+    }
+
+    function typesetMath(root) {
+      root.querySelectorAll("span.math").forEach((el) => {
+        const tex = el.dataset.tex || "";
+        const display = el.dataset.display === "1";
+        if (window.katex) {
+          try {
+            window.katex.render(tex, el, { displayMode: display, throwOnError: false });
+            return;
+          } catch (e) {
+            // fall through to the approximate renderer
+          }
+        }
+        el.innerHTML = approximateMath(escapeHtml(tex));
+      });
+    }
+
+    // KaTeX is deferred, so early messages render approximate first; re-typeset
+    // everything once it lands. data-tex keeps the source, so this is idempotent.
+    document.addEventListener("katex-ready", () => typesetMath(document));
 
     function appendMessage(role, content, imageDataUrl) {
       const div = document.createElement("div");
@@ -341,6 +414,7 @@
       }
       const text = document.createElement("span");
       text.innerHTML = renderRichText(content);
+      typesetMath(text);
       div.appendChild(text);
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
