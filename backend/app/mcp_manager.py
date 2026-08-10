@@ -127,10 +127,10 @@ MCP_SERVER_SPECS = {
     # still only read from the container's env at startup (no per-call
     # override), so these remain platform-key-only, not per-agent BYOK.
     # A NEW risk specific to bundling: one named server crashing at startup
-    # (e.g. brave_search with no BRAVE_API_KEY) can take the whole process
-    # — and every OTHER capability in that pack — down with it. Each pack's
-    # own entrypoint.sh guards against this by only including a keyed named
-    # server in the command line when its env var is actually present.
+    # for want of its API key can take the whole process — and every OTHER
+    # capability in that pack — down with it. Each pack's entrypoint.sh
+    # guards against this by only including a keyed named server in the
+    # command line when its env var is actually present.
     "time": {
         "build_dir": MCP_SERVERS_DIR / "research_pack",
         "container_name": "forge-mcp-research-pack",
@@ -153,14 +153,6 @@ MCP_SERVER_SPECS = {
         "image_tag": "forge-mcp-research-pack:latest",
         "internal_port": 8000,
         "sse_path": "/servers/sequential_thinking/sse",
-        "env_passthrough": [],
-    },
-    "brave_search": {
-        "build_dir": MCP_SERVERS_DIR / "research_pack",
-        "container_name": "forge-mcp-research-pack",
-        "image_tag": "forge-mcp-research-pack:latest",
-        "internal_port": 8000,
-        "sse_path": "/servers/brave_search/sse",
         "env_passthrough": [],
     },
     "filesystem": {
@@ -188,7 +180,6 @@ MCP_SERVER_SPECS = {
 # "env_passthrough"/"volume" entry above. Keyed by container_name instead,
 # so it applies no matter which pack member triggers creation.
 _PACK_ENV_PASSTHROUGH = {
-    "forge-mcp-research-pack": ["BRAVE_API_KEY"],
     "forge-mcp-dev-pack": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
 }
 

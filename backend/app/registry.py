@@ -363,18 +363,10 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         icon="🗂️",
         wired=False,
     ),
-    CapabilityOption(
-        key="web_search",
-        name="Web Search",
-        description=(
-            "Run live web searches via Brave Search and return summarized results. Uses a single "
-            "platform-configured key shared by every agent (not a per-agent key — see GitHub's "
-            "note above for why)."
-        ),
-        icon="🔍",
-        wired=True,
-        mcp_server="brave_search",
-    ),
+    # NOTE: a separate "Web Search" capability backed by Brave used to sit
+    # here. Firecrawl already searches AND scrapes, so Brave was a second way
+    # to do the same job that additionally demanded its own key — two entries
+    # for one capability is a choice users shouldn't have to make.
     CapabilityOption(
         key="image_generation",
         name="Image Generation",
