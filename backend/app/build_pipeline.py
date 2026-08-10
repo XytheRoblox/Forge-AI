@@ -9,7 +9,7 @@ import croniter
 import jsonschema
 from sqlmodel import Session, select
 
-from app import docker_manager, mcp_manager, registry, webpage_gen, workspace
+from app import docker_manager, mcp_manager, webpage_gen, workspace
 from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
@@ -77,21 +77,11 @@ def _validate(agent: Agent) -> Optional[str]:
         return "Agent name is required."
     if not agent.system_prompt or not agent.system_prompt.strip():
         return "No system prompt set. Write one directly or expand a manifesto first."
-    # Image Recognition deliberately has no model requirement: models that
-    # can't take image input get uploads described by the vision sidecar
-    # instead (see agent_runtime/app.py), so every agent can use it. The
-    # sidecar runs on Featherless, though, so a platform key has to exist for
-    # any agent that isn't already carrying one of its own.
-    if (
-        "image_recognition" in agent.capability_keys
-        and not registry.supports_vision(agent.model_provider, agent.model_id)
-        and not os.environ.get("FEATHERLESS_API_KEY")
-    ):
-        return (
-            f"Image Recognition on {agent.model_provider}/{agent.model_id} needs the vision "
-            "sidecar, which runs on Featherless — but the platform has no FEATHERLESS_API_KEY "
-            "configured. Add one to backend/.env, or pick a model that reads images natively."
-        )
+    # Image support is no longer validated here. Every agent accepts image
+    # uploads, and an agent whose model can't read them falls back to the
+    # vision sidecar; if the sidecar is unreachable the runtime says so in the
+    # transcript. That's a per-message degradation, not a reason to refuse to
+    # deploy an agent that may never be shown an image at all.
     if not agent.model_api_key:
         if agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
             pass

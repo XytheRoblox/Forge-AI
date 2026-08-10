@@ -24,7 +24,6 @@ WEBPAGE_PATH = WORKSPACE / "web" / "index.html"
 THEME_PATH = WORKSPACE / "theme.json"
 ENDPOINTS_PATH = WORKSPACE / "endpoints.json"
 CAPABILITIES_PATH = WORKSPACE / "capabilities.json"
-FEATURES_PATH = WORKSPACE / "features.json"
 
 CRON_CHECK_INTERVAL_SECONDS = 30
 MAX_TOOL_ITERATIONS = 5
@@ -284,6 +283,21 @@ def _set_status(text: str) -> None:
     _current_status = text
 
 
+def _pretty_tool(name: str) -> str:
+    """A tool name a person can read.
+
+    MCP tool names are machine identifiers — `ask_wolfram_alpha`,
+    `firecrawl_scrape`, `sequential_thinking`. Shown raw in the activity line
+    they read as debug output, so underscores become spaces and the redundant
+    verb prefixes some servers use are dropped."""
+    label = name.replace("_", " ").strip()
+    for prefix in ("ask ", "get ", "run "):
+        if label.startswith(prefix):
+            label = label[len(prefix) :]
+            break
+    return label or name
+
+
 @app.get("/chat/status")
 def chat_status():
     return {"status": _current_status}
@@ -293,14 +307,6 @@ def chat_status():
 def health():
     return {"status": "ok", "model_provider": MODEL_PROVIDER, "model_id": MODEL_ID}
 
-
-def _load_features() -> dict:
-    if not FEATURES_PATH.exists():
-        return {}
-    try:
-        return json.loads(FEATURES_PATH.read_text())
-    except json.JSONDecodeError:
-        return {}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -317,8 +323,12 @@ def interactive_webpage():
             pass
     html = html.replace("__ACCENT_COLOR__", accent)
 
-    image_upload_enabled = "true" if _load_features().get("image_recognition") else "false"
-    html = html.replace("__IMAGE_UPLOAD_ENABLED__", image_upload_enabled)
+    # Always on. Image support used to be a capability you attached, because it
+    # depended on the agent's model being multimodal. Since uploads route
+    # through the vision sidecar, every agent can read an image regardless of
+    # its model — so hiding the control behind a toggle only creates agents
+    # that silently can't be shown a screenshot.
+    html = html.replace("__IMAGE_UPLOAD_ENABLED__", "true")
 
     return HTMLResponse(html)
 
@@ -502,7 +512,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             return client.chat.completions.create(**kwargs)
 
         for round_index in range(MAX_TOOL_ITERATIONS):
-            _set_status(f"Asking {MODEL_ID}…")
+            _set_status("Thinking…")
             try:
                 response = _call_groq(use_tools=True)
             except BadRequestError:
@@ -559,11 +569,11 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Using {tool_call.function.name}…")
+                _set_status(f"Contacting {_pretty_tool(tool_call.function.name)}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
-        _set_status("Writing a final answer…")
+        _set_status("Writing the answer…")
         response = _call_groq(use_tools=False)
         return _strip_thinking(response.choices[0].message.content or "")
 
@@ -585,7 +595,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
         messages = [{"role": "system", "content": system_prompt}, *history]
 
         for round_index in range(MAX_TOOL_ITERATIONS):
-            _set_status(f"Asking {MODEL_ID}…")
+            _set_status("Thinking…")
             kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
             if tools:
                 kwargs["tools"] = tools
@@ -630,11 +640,11 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Using {tool_call.function.name}…")
+                _set_status(f"Contacting {_pretty_tool(tool_call.function.name)}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
-        _set_status("Writing a final answer…")
+        _set_status("Writing the answer…")
         response = client.chat.completions.create(
             model=MODEL_ID, max_tokens=2048, messages=messages
         )

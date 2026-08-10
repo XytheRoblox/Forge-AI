@@ -212,14 +212,12 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         wired=True,
         mcp_server="firecrawl",
     ),
-    CapabilityOption(
-        key="image_recognition",
-        name="Image Recognition",
-        description="Lets the agent see and analyze images you upload in chat. Works with any model — models that can't read images directly get a written description from a vision model instead.",
-        icon="🖼️",
-        wired=True,
-        mcp_server=None,
-    ),
+    # NOTE: "Image Recognition" used to be listed here. It's no longer a
+    # capability you attach — every agent can be shown an image, because the
+    # runtime routes uploads through a vision sidecar when the agent's own
+    # model can't read them. Leaving it in the picker implied agents without it
+    # couldn't see, which stopped being true and only produced agents with the
+    # attach button mysteriously missing.
     CapabilityOption(
         key="time",
         name="Time",

@@ -101,13 +101,6 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
     path.write_text(json.dumps(entries, indent=2))
 
 
-def write_features(agent) -> None:
-    """Non-MCP, built-in-to-the-runtime features toggled by capability keys."""
-    features = {"image_recognition": "image_recognition" in agent.capability_keys}
-    path = workspace_dir(agent.id) / "features.json"
-    path.write_text(json.dumps(features, indent=2))
-
-
 def remove_workspace(agent_id: int) -> None:
     path = WORKSPACE_ROOT / str(agent_id)
     if path.exists():
@@ -119,6 +112,5 @@ def ensure_workspace(agent) -> Path:
     write_cron(agent)
     write_endpoints(agent)
     write_theme(agent)
-    write_features(agent)
     write_cache_if_missing(agent)
     return workspace_dir(agent.id)
