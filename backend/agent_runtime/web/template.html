@@ -169,15 +169,36 @@
     color: var(--text-h);
     border: 1px solid var(--border);
   }
-  .tool-chip::before {
+  /* The brand's own mark carries the identification, so there's no status dot
+     on a successful call — a chip that's present means it ran. */
+  .tool-chip-icon {
+    font-size: 12px;
+    line-height: 1;
+  }
+  /* A supplied brand mark, shown instead of the emoji. Square-cropped so a
+     logo with odd proportions can't stretch the chip. */
+  .tool-chip-logo {
+    width: 14px;
+    height: 14px;
+    object-fit: contain;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .tool-chip-count {
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+  }
+  .tool-chip.failed {
+    opacity: 0.8;
+    border-color: #d2504a;
+  }
+  .tool-chip.failed::before {
     content: "";
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: var(--accent);
+    background: #d2504a;
   }
-  .tool-chip.failed { opacity: 0.75; }
-  .tool-chip.failed::before { background: #d2504a; }
   .msg.typing {
     gap: 6px;
   }
@@ -374,6 +395,10 @@
 
   <script>
     const messagesEl = document.getElementById("messages");
+    // Capability key -> data URI, inlined at build time from web/logos.
+    // Empty when no marks have been supplied; every chip then uses its emoji.
+    const TOOL_LOGOS = __TOOL_LOGOS__;
+
     const inputEl = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
     const imageInput = document.getElementById("image-input");
@@ -508,17 +533,59 @@
       div.appendChild(text);
 
       if (tools && tools.length) {
+        // One chip per tool, not per call. Working a problem in steps means
+        // calling the same tool repeatedly, and five identical chips in a row
+        // says nothing five times — collapse them and carry the count.
+        const grouped = [];
+        const byKey = new Map();
+        tools.forEach((t) => {
+          const key = t.name + "|" + (t.ok === false ? "failed" : "ok");
+          const existing = byKey.get(key);
+          if (existing) {
+            existing.count += 1;
+            return;
+          }
+          const entry = { name: t.name, icon: t.icon || "", key: t.key || "", ok: t.ok !== false, count: 1 };
+          byKey.set(key, entry);
+          grouped.push(entry);
+        });
+
         const footer = document.createElement("div");
         footer.className = "msg-tools";
         const label = document.createElement("span");
         label.className = "msg-tools-label";
-        label.textContent = tools.length === 1 ? "Used" : "Used " + tools.length + " tools:";
+        label.textContent = "Used";
         footer.appendChild(label);
-        tools.forEach((t) => {
+
+        grouped.forEach((t) => {
           const chip = document.createElement("span");
-          chip.className = "tool-chip" + (t.ok === false ? " failed" : "");
-          chip.textContent = t.name;
-          if (t.ok === false) chip.title = "This call failed";
+          chip.className = "tool-chip" + (t.ok ? "" : " failed");
+          const logo = t.key && TOOL_LOGOS[t.key];
+          if (logo) {
+            const img = document.createElement("img");
+            img.className = "tool-chip-logo";
+            img.src = logo;
+            img.alt = "";
+            chip.appendChild(img);
+          } else if (t.icon) {
+            const icon = document.createElement("span");
+            icon.className = "tool-chip-icon";
+            icon.textContent = t.icon;
+            chip.appendChild(icon);
+          }
+          const name = document.createElement("span");
+          name.textContent = t.name;
+          chip.appendChild(name);
+          if (t.count > 1) {
+            const count = document.createElement("span");
+            count.className = "tool-chip-count";
+            count.textContent = "×" + t.count;
+            chip.appendChild(count);
+          }
+          chip.title =
+            (t.ok ? "Called " : "Failed after ") +
+            t.count +
+            (t.count === 1 ? " time" : " times");
           footer.appendChild(chip);
         });
         div.appendChild(footer);

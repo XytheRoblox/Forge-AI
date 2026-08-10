@@ -1,9 +1,43 @@
+import base64
 import html as html_lib
+import json
+import mimetypes
 from pathlib import Path
 
 from app import llm_client
 
-TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "agent_runtime" / "web" / "template.html"
+WEB_DIR = Path(__file__).resolve().parent.parent / "agent_runtime" / "web"
+TEMPLATE_PATH = WEB_DIR / "template.html"
+LOGO_DIR = WEB_DIR / "logos"
+
+# Kept small deliberately: every logo is base64'd into every generated page, so
+# a stray 2MB PNG would bloat each agent's HTML. Anything larger is skipped in
+# favour of the capability's emoji.
+MAX_LOGO_BYTES = 64 * 1024
+
+
+def _tool_logos() -> dict[str, str]:
+    """Capability key -> data URI, for every usable file in web/logos.
+
+    The agent container serves a single self-contained HTML file and has no
+    static asset route, so a logo can only reach the page by travelling inside
+    it. Missing, oversized, or unrecognised files are simply absent from the
+    map, and the page falls back to the emoji for those capabilities."""
+    logos: dict[str, str] = {}
+    if not LOGO_DIR.is_dir():
+        return logos
+    for path in sorted(LOGO_DIR.iterdir()):
+        if path.suffix.lower() not in (".svg", ".png", ".jpg", ".jpeg", ".webp"):
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        if not raw or len(raw) > MAX_LOGO_BYTES:
+            continue
+        mime = mimetypes.types_map.get(path.suffix.lower()) or "image/svg+xml"
+        logos[path.stem] = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+    return logos
 
 
 def _purpose_line(agent) -> str:
@@ -60,5 +94,9 @@ def generate_webpage(agent, themed: bool = True) -> tuple[str, dict]:
     html = html.replace("<h1>Agent</h1>", f"<h1>{name}</h1>", 1)
     html = html.replace("<p>Ask it anything.</p>", f"<p>{tagline}</p>", 1)
     html = html.replace("__AGENT_THEME_CSS__", llm_client.theme_css(theme), 1)
+    # JSON-encoded so it drops straight into a <script> as a literal. Encoding
+    # `<` keeps a data URI from ever closing the script tag early.
+    logos = json.dumps(_tool_logos()).replace("<", "\\u003c")
+    html = html.replace("__TOOL_LOGOS__", logos, 1)
 
     return html, theme

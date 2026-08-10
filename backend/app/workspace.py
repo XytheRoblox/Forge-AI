@@ -2,6 +2,8 @@ import json
 import shutil
 from pathlib import Path
 
+from app.registry import CAPABILITY_OPTIONS
+
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "agent_workspaces"
 
 SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
@@ -93,8 +95,18 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
     own key if it provided one, else a rotated platform-provided key — the
     shared MCP server container has no key of its own, so a key must ride
     along with every tool call instead."""
+    # The display name and icon ride along so the runtime can label a tool call
+    # by its capability's brand ("WolframAlpha 🧮") rather than by the raw MCP
+    # tool identifier. registry is the single source of truth for both.
+    meta = {c.key: c for c in CAPABILITY_OPTIONS}
     entries = [
-        {"key": key, "mcp_url": url, "api_key": effective_keys.get(key)}
+        {
+            "key": key,
+            "mcp_url": url,
+            "api_key": effective_keys.get(key),
+            "label": meta[key].name if key in meta else key,
+            "icon": meta[key].icon if key in meta else "",
+        }
         for key, url in capability_urls.items()
     ]
     path = workspace_dir(agent.id) / "capabilities.json"

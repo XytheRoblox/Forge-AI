@@ -26,7 +26,12 @@ ENDPOINTS_PATH = WORKSPACE / "endpoints.json"
 CAPABILITIES_PATH = WORKSPACE / "capabilities.json"
 
 CRON_CHECK_INTERVAL_SECONDS = 30
-MAX_TOOL_ITERATIONS = 5
+# A decomposed problem spends one round per sub-result — find the components,
+# solve for the time, then compute the distance — so a cap of 5 silently
+# truncated exactly the multi-step work the tools exist for. The loop still
+# exits as soon as the model stops asking for tools; this only raises the
+# ceiling for problems that genuinely need the rounds.
+MAX_TOOL_ITERATIONS = 10
 
 # MCP servers are shared across all agents, so a capability that needs its
 # own API key (e.g. WolframAlpha) can't have that key baked into the shared
@@ -193,6 +198,36 @@ will still make sense with no surrounding context. Do not save trivia, one-off q
 anything already listed under "Agent memory" below. Never tell the user you will remember \
 something without calling the tool in the same turn."""
 
+REASONING_INSTRUCTIONS = """
+
+## How to work a problem
+Before answering anything that takes more than one step, plan it out:
+
+1. Say what is being asked and what you were given.
+2. Break it into sub-problems, and name them. Solve them in dependency order — a value you
+   need later is a sub-problem you do first.
+3. For each sub-problem, decide whether you need a tool at all. Setting up the physics,
+   choosing the method, deciding which formula applies, and interpreting the result are your
+   job and no tool does them for you.
+4. Solve, then sanity-check the answer: right order of magnitude, right units, right sign,
+   and consistent with the situation described.
+
+Use a computational tool for the parts that are genuinely computational — evaluating an
+integral, solving an equation, arithmetic you could get wrong — and give it ONE well-posed
+sub-problem at a time, already reduced to symbols. Don't hand it the original word problem
+and hope: it can't see the setup you're carrying in your head, and a confident wrong answer
+to a badly-posed query is worse than no tool at all. Cite what you got back and carry it into
+the next step.
+
+Some questions need no tool whatsoever. Conceptual questions — which force is larger, what
+happens qualitatively, why a result looks the way it does — are answered by reasoning about
+the situation, and reaching for a calculator instead of thinking is how those get answered
+wrongly. In particular, be careful with a system that is momentarily at rest: zero velocity
+does not mean zero acceleration, and it does not mean the forces balance.
+
+If a tool's answer contradicts your own reasoning, don't just adopt it. Work out which is
+wrong and say so."""
+
 TOOL_LOG_INSTRUCTIONS = """
 
 ## Recent tool calls
@@ -215,7 +250,10 @@ def _effective_system_prompt() -> str:
     base = _load_system_prompt()
     # The instructions are unconditional: `remember` is always available, so
     # the prompt must always explain it, whether or not anything is stored yet.
-    prompt = f"{base}{MEMORY_INSTRUCTIONS}"
+    # Reasoning guidance comes before the memory section: it's about how to
+    # answer at all, which applies to every turn, whereas memory is context for
+    # a particular one.
+    prompt = f"{base}{REASONING_INSTRUCTIONS}{MEMORY_INSTRUCTIONS}"
     memory = _load_memory()
     prompt += (
         f"\n\n## Agent memory (from prior sessions)\n{memory}"
@@ -268,6 +306,11 @@ class ChatRequest(BaseModel):
 class ToolUse(BaseModel):
     name: str
     ok: bool
+    icon: str = ""
+    # The capability this tool belongs to. The page matches logos on this
+    # rather than on `name`, so renaming a capability never silently drops
+    # its mark.
+    key: str = ""
 
 
 class ChatResponse(BaseModel):
@@ -305,12 +348,27 @@ def _begin_turn() -> None:
 
 def _record_tool_use(name: str, ok: bool) -> None:
     calls = getattr(_turn, "tools", None)
-    if calls is not None:
-        calls.append({"name": _pretty_tool(name), "ok": ok})
+    if calls is None:
+        return
+    info = _TOOL_INDEX.get(name) or {}
+    calls.append(
+        {
+            "name": info.get("label") or _pretty_tool(name),
+            "icon": info.get("icon") or "",
+            "key": info.get("capability_key") or "",
+            "ok": ok,
+        }
+    )
 
 
 def _turn_tools() -> list[dict]:
     return list(getattr(_turn, "tools", []) or [])
+
+
+def _tool_label(name: str) -> str:
+    """The brand a person recognises, falling back to a tidied identifier."""
+    info = _TOOL_INDEX.get(name) or {}
+    return info.get("label") or _pretty_tool(name)
 
 
 def _pretty_tool(name: str) -> str:
@@ -425,6 +483,14 @@ async def _discover_tools() -> None:
                 "input_schema": input_schema,
                 "api_key_param": key_param,
                 "api_key": capability.get("api_key"),
+                # What a person should see when this tool runs: the
+                # capability's brand, not the MCP identifier. A single
+                # capability often exposes several tools (firecrawl_scrape,
+                # firecrawl_search), and naming each one separately turns one
+                # action into a wall of unfamiliar strings.
+                "label": capability.get("label") or _pretty_tool(tool.name),
+                "icon": capability.get("icon") or "",
+                "capability_key": capability.get("key") or "",
             }
 
 
@@ -433,6 +499,8 @@ async def _discover_tools() -> None:
 # capabilities attached still gets memory.
 BUILTIN_TOOLS = {
     "remember": {
+        "label": "Memory",
+        "icon": "\U0001F9E0",
         "description": (
             "Save a fact to your long-term memory so you still know it in future "
             "conversations. Use it for durable things — the user's name, preferences, "
@@ -462,6 +530,9 @@ def _register_builtin_tools() -> None:
             "builtin": True,
             "description": spec["description"],
             "input_schema": spec["input_schema"],
+            "label": spec["label"],
+            "icon": spec["icon"],
+            "capability_key": name,
         }
 
 
@@ -541,6 +612,11 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             for name, info in _TOOL_INDEX.items()
         ]
         messages = [{"role": "system", "content": system_prompt}, *history]
+        # What the model says WHILE calling tools — "first find the components,
+        # then solve for the time" — is the working, and it was being thrown away:
+        # only the last message survived, so a decomposed answer arrived as a bare
+        # "Final answer:" with the steps that justified it missing.
+        narration: list[str] = []
 
         def _call_groq(use_tools: bool):
             kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": messages}
@@ -566,7 +642,8 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
             if not message.tool_calls:
                 _set_status("Writing a reply…")
-                return _strip_thinking(message.content or "")
+                final = _strip_thinking(message.content or "")
+                return "\n\n".join([*narration, final]) if narration else final
 
             # Build a minimal, request-safe assistant message rather than
             # message.model_dump() — the SDK's response schema includes
@@ -583,6 +660,9 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
             # 0-9, with a length of 9"), so this pads to precisely that rather
             # than using a readable "call_1".
+            interim = _strip_thinking(message.content or "").strip()
+            if interim:
+                narration.append(interim)
             call_ids = [
                 tc.id or f"c{round_index:02d}{position:02d}0000"
                 for position, tc in enumerate(message.tool_calls)
@@ -606,7 +686,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Contacting {_pretty_tool(tool_call.function.name)}…")
+                _set_status(f"Contacting {_tool_label(tool_call.function.name)}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
@@ -630,6 +710,11 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             for name, info in _TOOL_INDEX.items()
         ]
         messages = [{"role": "system", "content": system_prompt}, *history]
+        # What the model says WHILE calling tools — "first find the components,
+        # then solve for the time" — is the working, and it was being thrown away:
+        # only the last message survived, so a decomposed answer arrived as a bare
+        # "Final answer:" with the steps that justified it missing.
+        narration: list[str] = []
 
         for round_index in range(MAX_TOOL_ITERATIONS):
             _set_status("Thinking…")
@@ -641,7 +726,8 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
             if not message.tool_calls:
                 _set_status("Writing a reply…")
-                return _strip_thinking(message.content or "")
+                final = _strip_thinking(message.content or "")
+                return "\n\n".join([*narration, final]) if narration else final
 
             # Not every model returns an id with its tool calls — Mistral
             # Medium returns null — but the API rejects the follow-up request
@@ -654,6 +740,9 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # 9 alphanumeric characters ("Tool call id ... must be a-z, A-Z,
             # 0-9, with a length of 9"), so this pads to precisely that rather
             # than using a readable "call_1".
+            interim = _strip_thinking(message.content or "").strip()
+            if interim:
+                narration.append(interim)
             call_ids = [
                 tc.id or f"c{round_index:02d}{position:02d}0000"
                 for position, tc in enumerate(message.tool_calls)
@@ -677,7 +766,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                _set_status(f"Contacting {_pretty_tool(tool_call.function.name)}…")
+                _set_status(f"Contacting {_tool_label(tool_call.function.name)}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": result_text})
 
