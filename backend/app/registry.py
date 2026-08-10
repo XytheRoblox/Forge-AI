@@ -64,10 +64,26 @@ STDIO_SERVERS: dict[str, dict] = {
     },
 }
 
+# Every Google capability is served by one process. It's handed the agent's
+# REFRESH token, not an access token: access tokens last an hour and an agent
+# is expected to outlive that, so the server re-exchanges as needed instead of
+# the connection quietly dying mid-afternoon.
+GOOGLE_STDIO_SERVER = {
+    "command": "python3",
+    "args": ["/app/google_server.py"],
+}
+
+
+def google_capabilities() -> list[str]:
+    return [c.key for c in CAPABILITY_OPTIONS if c.oauth_provider == "google"]
+
 
 def hosted_in_agent(capability_key: str) -> bool:
     """Whether this capability runs inside the agent's own container."""
-    return capability_key in STDIO_SERVERS
+    if capability_key in STDIO_SERVERS:
+        return True
+    capability = next((c for c in CAPABILITY_OPTIONS if c.key == capability_key), None)
+    return bool(capability and capability.oauth_provider == "google")
 
 
 MODEL_OPTIONS: list[ModelOption] = [
@@ -319,7 +335,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         name="Calendar",
         description="Check and hold dates on a calendar.",
         icon="📅",
-        wired=False,
+        wired=True,
+        mcp_server="google",
         oauth_provider="google",
         oauth_scopes=['https://www.googleapis.com/auth/calendar.events'],
     ),
@@ -344,7 +361,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         name="Google Sheets",
         description="Read and write rows in a Google Sheet.",
         icon="📊",
-        wired=False,
+        wired=True,
+        mcp_server="google",
         oauth_provider="google",
         oauth_scopes=["https://www.googleapis.com/auth/spreadsheets"],
     ),
@@ -353,7 +371,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         name="Google Docs",
         description="Read, draft and edit Google Docs.",
         icon="📝",
-        wired=False,
+        wired=True,
+        mcp_server="google",
         oauth_provider="google",
         oauth_scopes=["https://www.googleapis.com/auth/documents"],
     ),
@@ -371,7 +390,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         name="Google Drive",
         description="Find, open and save files in Google Drive.",
         icon="📁",
-        wired=False,
+        wired=True,
+        mcp_server="google",
         oauth_provider="google",
         # drive.file, not the full drive scope, and the difference matters:
         # full Drive access is one of Google's RESTRICTED scopes, which needs
@@ -386,7 +406,8 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         name="Google Classroom",
         description="Look up courses, assignments and due dates in Google Classroom.",
         icon="🎓",
-        wired=False,
+        wired=True,
+        mcp_server="google",
         oauth_provider="google",
         # Read-only, and deliberately no roster scope: student rosters are
         # restricted, and reading other people's coursework raises a consent

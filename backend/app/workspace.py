@@ -2,7 +2,9 @@ import json
 import shutil
 from pathlib import Path
 
-from app.registry import CAPABILITY_OPTIONS, STDIO_SERVERS
+import os
+
+from app.registry import CAPABILITY_OPTIONS, GOOGLE_STDIO_SERVER, STDIO_SERVERS
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "agent_workspaces"
 
@@ -107,6 +109,32 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
             "label": meta[key].name if key in meta else key,
             "icon": meta[key].icon if key in meta else "",
         }
+        capability = meta.get(key)
+        if capability is not None and capability.oauth_provider == "google":
+            # Every Google capability is the same process; GOOGLE_CAPABILITIES
+            # decides which tools it exposes, so an agent with only Calendar
+            # isn't offered Classroom tools it has no scope for. The REFRESH
+            # token goes in rather than an access token — the server
+            # re-exchanges it, so the agent keeps working past the hour an
+            # access token lasts.
+            grant = (agent.oauth_grants or {}).get("google") or {}
+            google_keys = [
+                k
+                for k in agent.capability_keys
+                if (meta.get(k) and meta[k].oauth_provider == "google")
+            ]
+            entry["transport"] = "stdio"
+            entry["command"] = GOOGLE_STDIO_SERVER["command"]
+            entry["args"] = GOOGLE_STDIO_SERVER["args"]
+            entry["env"] = {
+                "GOOGLE_CLIENT_ID": os.environ.get("GOOGLE_CLIENT_ID", ""),
+                "GOOGLE_CLIENT_SECRET": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+                "GOOGLE_REFRESH_TOKEN": grant.get("refresh_token") or "",
+                "GOOGLE_CAPABILITIES": ",".join(google_keys),
+            }
+            entries.append(entry)
+            continue
+
         launch = STDIO_SERVERS.get(key)
         if launch:
             # Hosted by the agent itself: the runtime spawns this as a

@@ -25,6 +25,9 @@ RUN npm install -g --no-fund --no-audit \
       @modelcontextprotocol/server-sequential-thinking \
     && npm cache clean --force
 
+# The Google server is ours rather than an npm package, so it's copied in.
+COPY google_server.py /app/google_server.py
+
 # Per-agent scratch space for the filesystem capability. Previously this was
 # one named volume shared by every agent on the host.
 RUN mkdir -p /scratch

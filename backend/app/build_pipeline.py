@@ -90,6 +90,20 @@ def _validate(agent: Agent) -> Optional[str]:
                 f"This agent needs its own {agent.model_provider} API key before it can deploy — "
                 "add it on the Review step."
             )
+    # A Google capability without a connected account would deploy and then
+    # fail on its first real request, so it's blocked here the same way a
+    # missing API key is.
+    google_keys = [
+        key
+        for key in agent.capability_keys
+        if CAPABILITY_LOOKUP.get(key) and CAPABILITY_LOOKUP[key].oauth_provider == "google"
+    ]
+    if google_keys and not (agent.oauth_grants or {}).get("google", {}).get("refresh_token"):
+        names = ", ".join(CAPABILITY_LOOKUP[k].name for k in google_keys)
+        return (
+            f"{names} need a connected Google account — use Authorize with Google on the "
+            "Review step before deploying."
+        )
     for key in agent.capability_keys:
         capability = CAPABILITY_LOOKUP.get(key)
         if not capability or not capability.requires_api_key:
