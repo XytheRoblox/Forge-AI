@@ -307,6 +307,13 @@ class ToolUse(BaseModel):
     name: str
     ok: bool
     icon: str = ""
+    # The exact request the model made and what came back, so a reply's tool
+    # use can be inspected rather than taken on trust. `args` is the model's
+    # OWN arguments, captured before the platform injects an API key — a
+    # panel the user can open must never be able to show a secret.
+    tool: str = ""
+    args: str = ""
+    result: str = ""
     # The capability this tool belongs to. The page matches logos on this
     # rather than on `name`, so renaming a capability never silently drops
     # its mark.
@@ -346,17 +353,37 @@ def _begin_turn() -> None:
     _turn.tools = []
 
 
-def _record_tool_use(name: str, ok: bool) -> None:
+# What a detail panel shows. Generous next to the tool log's 600 — this is
+# read deliberately by someone who opened it, not replayed into every prompt.
+MAX_UI_RESULT_CHARS = 2000
+
+
+def _clip(text: str, limit: int) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[:limit].rstrip() + f"\n… (+{len(text) - limit} more characters)"
+
+
+def _record_tool_use(name: str, ok: bool, arguments: dict, result: str) -> None:
     calls = getattr(_turn, "tools", None)
     if calls is None:
         return
     info = _TOOL_INDEX.get(name) or {}
+    try:
+        args = json.dumps(arguments, indent=2, ensure_ascii=False)
+    except (TypeError, ValueError):
+        args = str(arguments)
     calls.append(
         {
             "name": info.get("label") or _pretty_tool(name),
             "icon": info.get("icon") or "",
             "key": info.get("capability_key") or "",
             "ok": ok,
+            # The identifier is worth surfacing even though the chip shows the
+            # brand: one capability exposes several tools, and which one ran is
+            # exactly what someone opening this panel wants to know.
+            "tool": name,
+            "args": _clip(args, MAX_UI_RESULT_CHARS),
+            "result": _clip(result, MAX_UI_RESULT_CHARS),
         }
     )
 
@@ -555,14 +582,14 @@ async def _on_startup() -> None:
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
-        _record_tool_use(name, ok=False)
+        _record_tool_use(name, ok=False, arguments=arguments, result=f"Error: unknown tool {name!r}")
         return f"Error: unknown tool {name!r}"
     if info.get("builtin"):
         try:
             result = _run_builtin_tool(name, arguments)
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
             result = f"Error running tool {name!r}: {exc}"
-        _record_tool_use(name, ok=not result.startswith("Error"))
+        _record_tool_use(name, ok=not result.startswith("Error"), arguments=arguments, result=result)
         _log_tool_call(name, arguments, result)
         return result
     call_args = dict(arguments)
@@ -579,7 +606,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
     # are logged too: knowing a call already failed is what stops the model
     # retrying it unchanged. The API key is deliberately taken from
     # `arguments`, not `call_args`, so an injected secret never lands on disk.
-    _record_tool_use(name, ok=ok)
+    _record_tool_use(name, ok=ok, arguments=arguments, result=result)
     _log_tool_call(name, arguments, result)
     return result
 

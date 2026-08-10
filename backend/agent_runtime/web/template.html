@@ -188,6 +188,64 @@
     opacity: 0.6;
     font-variant-numeric: tabular-nums;
   }
+  /* Chips are buttons now — they open the request behind them. */
+  button.tool-chip {
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  button.tool-chip:hover { border-color: var(--accent); }
+  button.tool-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button.tool-chip[aria-expanded="true"] {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+
+  .tool-details {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    white-space: normal;
+  }
+  .tool-call {
+    border-left: 2px solid var(--accent);
+    padding-left: 10px;
+  }
+  .tool-call-head {
+    font-size: 11px;
+    color: var(--text-h);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    margin-bottom: 4px;
+  }
+  .tool-call-label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+    opacity: 0.7;
+    margin-top: 6px;
+  }
+  /* Tool output is arbitrary and often long: give it its own scroller and a
+     height ceiling so opening a panel can't push the conversation off screen. */
+  .tool-call-body {
+    margin: 3px 0 0;
+    padding: 7px 9px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-h);
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .tool-chip.failed {
     opacity: 0.8;
     border-color: #d2504a;
@@ -516,6 +574,42 @@
     // re-typeset once it lands. data-tex keeps the source, so this is idempotent.
     document.addEventListener("mathjax-ready", () => typesetMath(document));
 
+    // One block per call, in the order they were made — a tool used four
+    // times shows four requests, since which sub-problem went to it is the
+    // interesting part.
+    function renderToolCalls(group) {
+      const wrap = document.createElement("div");
+      group.calls.forEach((call, index) => {
+        const block = document.createElement("div");
+        block.className = "tool-call";
+
+        const head = document.createElement("div");
+        head.className = "tool-call-head";
+        head.textContent =
+          (group.calls.length > 1 ? "Call " + (index + 1) + " · " : "") +
+          (call.tool || group.name) +
+          (call.ok === false ? " · failed" : "");
+        block.appendChild(head);
+
+        [
+          ["Request", call.args],
+          ["Response", call.result],
+        ].forEach(([label, body]) => {
+          if (!body) return;
+          const tag = document.createElement("div");
+          tag.className = "tool-call-label";
+          tag.textContent = label;
+          const pre = document.createElement("pre");
+          pre.className = "tool-call-body";
+          pre.textContent = body;
+          block.appendChild(tag);
+          block.appendChild(pre);
+        });
+        wrap.appendChild(block);
+      });
+      return wrap;
+    }
+
     // `tools` is the list this turn actually used, newest reply only. Omitted
     // entirely when the model answered without calling anything — a permanent
     // "Tools used: none" row would be noise on most messages.
@@ -543,9 +637,18 @@
           const existing = byKey.get(key);
           if (existing) {
             existing.count += 1;
+            existing.calls.push(t);
             return;
           }
-          const entry = { name: t.name, icon: t.icon || "", key: t.key || "", ok: t.ok !== false, count: 1 };
+          const entry = {
+            name: t.name,
+            icon: t.icon || "",
+            key: t.key || "",
+            ok: t.ok !== false,
+            count: 1,
+            calls: [],
+          };
+          entry.calls.push(t);
           byKey.set(key, entry);
           grouped.push(entry);
         });
@@ -557,9 +660,15 @@
         label.textContent = "Used";
         footer.appendChild(label);
 
+        const details = document.createElement("div");
+        details.className = "tool-details";
+        details.hidden = true;
+
         grouped.forEach((t) => {
-          const chip = document.createElement("span");
+          const chip = document.createElement("button");
+          chip.type = "button";
           chip.className = "tool-chip" + (t.ok ? "" : " failed");
+          chip.setAttribute("aria-expanded", "false");
           const logo = t.key && TOOL_LOGOS[t.key];
           if (logo) {
             const img = document.createElement("img");
@@ -582,13 +691,25 @@
             count.textContent = "×" + t.count;
             chip.appendChild(count);
           }
-          chip.title =
-            (t.ok ? "Called " : "Failed after ") +
-            t.count +
-            (t.count === 1 ? " time" : " times");
+          chip.title = "Show what was sent and what came back";
+          chip.addEventListener("click", () => {
+            const alreadyOpen = chip.getAttribute("aria-expanded") === "true";
+            footer.querySelectorAll(".tool-chip").forEach((c) =>
+              c.setAttribute("aria-expanded", "false")
+            );
+            if (alreadyOpen) {
+              details.hidden = true;
+              return;
+            }
+            chip.setAttribute("aria-expanded", "true");
+            details.textContent = "";
+            details.appendChild(renderToolCalls(t));
+            details.hidden = false;
+          });
           footer.appendChild(chip);
         });
         div.appendChild(footer);
+        div.appendChild(details);
       }
 
       messagesEl.appendChild(div);
