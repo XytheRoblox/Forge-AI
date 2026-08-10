@@ -220,6 +220,7 @@ export function Wizard({
           dockerAvailable={dockerAvailable}
           error={error}
           onAgentChanged={refreshAgent}
+          onPersist={ensurePersisted}
           notify={notify}
         />
       );

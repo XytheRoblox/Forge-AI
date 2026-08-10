@@ -6,6 +6,14 @@ interface Props {
   /** The Google-backed capabilities this agent has attached. */
   capabilities: CapabilityOption[];
   agent: Agent | null;
+  /**
+   * Saves the wizard's current state and returns the stored agent. Consent
+   * has to be requested against what the user has actually selected, and the
+   * capability list lives in unsaved wizard state until something persists
+   * it — so this runs first, or Google is asked for the scopes of whatever
+   * was last written, which is usually nothing.
+   */
+  onPersist: () => Promise<Agent>;
   onChanged: () => void;
   notify: (message: string, kind?: "success" | "error") => void;
 }
@@ -20,7 +28,7 @@ interface Props {
  * wizard isn't lost to an OAuth round trip. The popup posts back when it's
  * done; the timer is the fallback for a user who closes it manually.
  */
-export function GoogleConnect({ capabilities, agent, onChanged, notify }: Props) {
+export function GoogleConnect({ capabilities, agent, onPersist, onChanged, notify }: Props) {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
 
@@ -42,13 +50,12 @@ export function GoogleConnect({ capabilities, agent, onChanged, notify }: Props)
   }, []);
 
   const connect = useCallback(async () => {
-    if (!agent) {
-      notify("Save this agent as a draft first, then connect Google.", "error");
-      return;
-    }
     setConnecting(true);
     try {
-      const { authorization_url } = await api.startGoogleOAuth(agent.id);
+      // Persist first: the agent may not exist yet, and even if it does its
+      // stored capability list predates the selection being consented to.
+      const saved = await onPersist();
+      const { authorization_url } = await api.startGoogleOAuth(saved.id);
       const popup = window.open(authorization_url, "forge-google-oauth", "width=520,height=680");
       if (!popup) {
         notify("Allow pop-ups for this site to connect a Google account.", "error");
@@ -76,7 +83,7 @@ export function GoogleConnect({ capabilities, agent, onChanged, notify }: Props)
       notify((e as Error).message, "error");
       setConnecting(false);
     }
-  }, [agent, notify, onChanged]);
+  }, [onPersist, notify, onChanged]);
 
   async function disconnect() {
     if (!agent) return;

@@ -14,6 +14,7 @@ interface Props extends StepProps {
   dockerAvailable: boolean | null;
   error: string | null;
   onAgentChanged: () => void;
+  onPersist: () => Promise<Agent>;
   notify: (message: string, kind?: "success" | "error") => void;
 }
 
@@ -30,6 +31,7 @@ export function StepReview({
   dockerAvailable,
   error,
   onAgentChanged,
+  onPersist,
   notify,
 }: Props) {
   const model = models.find(
@@ -60,6 +62,7 @@ export function StepReview({
       <GoogleConnect
         capabilities={googleCapabilities}
         agent={agent}
+        onPersist={onPersist}
         onChanged={onAgentChanged}
         notify={notify}
       />
