@@ -75,6 +75,42 @@ Respond with ONLY a JSON object, no markdown fence:
 {{"model_id": "<exact id copied from the list above>", "reason": "<one sentence, under 20 words, addressed to the user>"}}"""
 
 
+SUGGEST_ENDPOINTS_MODEL = "llama-3.3-70b-versatile"
+
+SUGGEST_ENDPOINTS_PROMPT = """Design API endpoints for a specific AI agent, for developers who \
+want to call it from their own code.
+
+The agent is called "{name}" and its purpose is:
+---
+{purpose}
+---
+{capabilities}
+Endpoints it already has, which you must NOT propose again: {taken}
+
+Propose up to {count} endpoints that only make sense for THIS agent — the job someone would
+actually automate against it. A study-planner agent might expose /plan-week; a support agent
+/triage-ticket; a nutrition agent /analyze-meal. Do not propose generic wrappers like
+/summarize or /chat, and do not propose an endpoint that just restates the agent's whole
+purpose with one text field.
+
+Rules for each endpoint:
+- `path` is lowercase kebab-case starting with "/", one or two words, and unique.
+- `fields` are the JSON inputs the caller sends. Give each a name in lower_snake_case and a
+  type of string, number, boolean, array or object. Mark a field required only when the
+  endpoint is meaningless without it. Two to four fields is usually right.
+- Inputs are JSON values only. There are no file uploads and no binary — a field named
+  something_file or image_data can never be filled. When the agent needs a document, take a
+  URL to it, or the text itself, and name the field accordingly.
+- `instruction` is what the agent is told to do with that input. Name the fields explicitly,
+  and state the exact output shape you want back — the caller gets raw text, so "respond with
+  only the rewritten paragraph" beats "help the user". Two or three sentences.
+- `summary` is a full sentence of six to twelve words, shown on a card in the UI. "Check a
+  student's working against the problem and mark the first error" — not "Review steps".
+
+Respond with ONLY a JSON object, no markdown fence:
+{{"endpoints": [{{"name": "Plan a week", "icon": "📅", "summary": "Turn a topic list into a day-by-day study plan.", "path": "/plan-week", "method": "POST", "description": "Build a study plan for one week.", "fields": [{{"name": "topics", "type": "array", "required": true}}, {{"name": "hours_per_day", "type": "number", "required": false}}], "instruction": "Build a day-by-day study plan covering every entry in `topics`, fitting `hours_per_day` hours a day (2 if absent). Respond with one line per day and nothing else."}}]}}"""
+
+
 THEME_MODEL = "llama-3.3-70b-versatile"
 
 THEME_PROMPT = """You are designing the visual theme for a single-purpose AI agent's chat page.
@@ -346,3 +382,132 @@ def expand_manifesto(manifesto: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     return _strip_thinking(response.choices[0].message.content)
+
+
+
+# What the visual endpoint builder offers, so a suggested field can always be
+# rebuilt and edited in the same form.
+_FIELD_TYPES = {"string", "number", "boolean", "array", "object"}
+_PATH_RE = re.compile(r"^/[a-z0-9][a-z0-9\-]{0,30}(/[a-z0-9][a-z0-9\-]{0,30})?$")
+_FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+_METHODS = {"POST", "GET", "PUT", "PATCH"}
+
+# Routes the agent runtime serves itself. A suggestion landing on one of these
+# would be registered second and never reached, so the endpoint would look
+# attached and simply not work.
+_RESERVED_PATHS = {"/", "/chat", "/chat/status", "/health", "/cache/update", "/docs", "/openapi.json"}
+
+
+def _coerce_endpoint(raw: dict, taken: set[str]) -> Optional[dict]:
+    """Turn one model-authored endpoint into a safe EndpointTemplate dict.
+
+    Fields come back as a name/type/required list rather than a JSON Schema,
+    and the schema is compiled here — a model-authored schema would be handed
+    straight to jsonschema.validate on every request to the deployed agent,
+    and a malformed one breaks the endpoint at runtime rather than here.
+    Anything that doesn't fit is dropped rather than repaired: a wrong
+    suggestion costs more than a missing one."""
+    path = str(raw.get("path") or "").strip().lower()
+    if not _PATH_RE.match(path) or path in _RESERVED_PATHS or path in taken:
+        return None
+    method = str(raw.get("method") or "POST").strip().upper()
+    if method not in _METHODS:
+        method = "POST"
+
+    properties: dict[str, dict] = {}
+    required: list[str] = []
+    for field in raw.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        fname = str(field.get("name") or "").strip().lower()
+        ftype = str(field.get("type") or "string").strip().lower()
+        if not _FIELD_NAME_RE.match(fname) or fname in properties:
+            continue
+        properties[fname] = {"type": ftype if ftype in _FIELD_TYPES else "string"}
+        if field.get("required"):
+            required.append(fname)
+    if not properties:
+        return None
+
+    instruction = str(raw.get("instruction") or "").strip()
+    name = str(raw.get("name") or "").strip()
+    if not instruction or not name:
+        return None
+
+    icon = str(raw.get("icon") or "").strip()
+    return {
+        "key": f"suggested{path.replace('/', '_').replace('-', '_')}",
+        "name": name[:40],
+        # One emoji, or none — a model that answers with a word here shouldn't
+        # put a word where the card draws an icon.
+        "icon": icon if 0 < len(icon) <= 2 else "\u2728",
+        "summary": (str(raw.get("summary") or "").strip() or instruction)[:90],
+        "path": path,
+        "method": method,
+        "description": str(raw.get("description") or "").strip()[:120],
+        "input_schema": {"type": "object", "properties": properties, "required": required},
+        "instruction": instruction[:1200],
+        "suggested_capability": None,
+        "suggested_capability_name": None,
+    }
+
+
+def suggest_endpoints(
+    name: str,
+    purpose: str,
+    capability_names: list[str],
+    taken_paths: list[str],
+    count: int = 3,
+) -> list[dict]:
+    """Propose endpoints that suit this specific agent.
+
+    Same contract as recommend_model: this is a convenience, so every failure
+    path — no key, bad JSON, nothing usable in the response — returns an empty
+    list and the stock templates carry on below it."""
+    import json
+
+    if not purpose.strip():
+        return []
+    capabilities = (
+        f"Capabilities it can call: {', '.join(capability_names)}.\n"
+        if capability_names
+        else "It has no capabilities attached, so it can only reason over what the caller sends.\n"
+    )
+    try:
+        client = _get_groq()
+        response = client.chat.completions.create(
+            model=SUGGEST_ENDPOINTS_MODEL,
+            max_tokens=1400,
+            messages=[
+                {
+                    "role": "user",
+                    "content": SUGGEST_ENDPOINTS_PROMPT.format(
+                        name=name or "this agent",
+                        purpose=purpose.strip()[:1500],
+                        capabilities=capabilities,
+                        taken=", ".join(taken_paths) or "none",
+                        count=count,
+                    ),
+                }
+            ],
+        )
+        text = _strip_thinking(response.choices[0].message.content or "")
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            return []
+        parsed = json.loads(text[start : end + 1])
+    except Exception:  # noqa: BLE001 - a missing suggestion is not an error
+        return []
+
+    taken = {p.lower() for p in taken_paths}
+    out: list[dict] = []
+    for raw in parsed.get("endpoints") or []:
+        if len(out) >= count:
+            break
+        if not isinstance(raw, dict):
+            continue
+        endpoint = _coerce_endpoint(raw, taken)
+        if endpoint:
+            taken.add(endpoint["path"])
+            out.append(endpoint)
+    return out

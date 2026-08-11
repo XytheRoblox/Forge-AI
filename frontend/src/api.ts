@@ -27,6 +27,16 @@ export const api = {
   listModels: () => request<ModelOption[]>("/models"),
   listCapabilities: () => request<CapabilityOption[]>("/capabilities"),
   listEndpointTemplates: () => request<EndpointTemplate[]>("/endpoint-templates"),
+  suggestEndpoints: (payload: {
+    name: string;
+    purpose: string;
+    capability_keys: string[];
+    taken_paths: string[];
+  }) =>
+    request<{ recommendations: EndpointTemplate[] }>("/endpoint-templates/recommend", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   dockerStatus: () => request<{ available: boolean }>("/docker/status"),
 
   listAgents: () => request<Agent[]>("/agents"),

@@ -6,9 +6,20 @@ import { EndpointTemplates } from "./EndpointTemplates";
 interface Props {
   endpoints: EndpointSpec[];
   onChange: (endpoints: EndpointSpec[]) => void;
+  /** Context for the tailored suggestions. Omitted on screens that don't
+   * know what the agent is for; the stock templates still show. */
+  agentName?: string;
+  purpose?: string;
+  capabilityKeys?: string[];
 }
 
-export function EndpointList({ endpoints, onChange }: Props) {
+export function EndpointList({
+  endpoints,
+  onChange,
+  agentName,
+  purpose,
+  capabilityKeys,
+}: Props) {
   const [adding, setAdding] = useState(false);
 
   function handleAdd(newEndpoints: EndpointSpec[]) {
@@ -22,7 +33,13 @@ export function EndpointList({ endpoints, onChange }: Props) {
 
   return (
     <div className="endpoint-editor">
-      <EndpointTemplates existing={endpoints} onAdd={(ep) => onChange([...endpoints, ep])} />
+      <EndpointTemplates
+        existing={endpoints}
+        onAdd={(ep) => onChange([...endpoints, ep])}
+        agentName={agentName}
+        purpose={purpose}
+        capabilityKeys={capabilityKeys}
+      />
 
       {endpoints.length > 0 && (
         <ul className="endpoint-list">

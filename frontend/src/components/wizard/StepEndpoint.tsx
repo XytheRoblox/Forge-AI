@@ -26,6 +26,9 @@ export function StepEndpoint({ state, update }: StepProps) {
         <EndpointList
           endpoints={state.endpoints}
           onChange={(endpoints) => update({ endpoints })}
+          agentName={state.name}
+          purpose={state.manifesto || state.system_prompt}
+          capabilityKeys={state.capability_keys}
         />
       </div>
     </div>

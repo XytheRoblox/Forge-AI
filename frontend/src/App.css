@@ -1569,3 +1569,26 @@ textarea {
 .endpoint-templates {
   margin-bottom: 12px;
 }
+
+/* Tailored suggestions sit above the stock templates and aren't collapsible —
+   they're the answer to "what would this agent expose?", so hiding them
+   behind a disclosure would bury the more useful of the two lists. */
+.endpoint-suggestions {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.endpoint-suggestions-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}

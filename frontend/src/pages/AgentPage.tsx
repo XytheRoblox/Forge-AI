@@ -208,7 +208,13 @@ export function AgentPage({
             </>
           ) : (
             <>
-              <EndpointList endpoints={editingEndpoints} onChange={setEditingEndpoints} />
+              <EndpointList
+                endpoints={editingEndpoints}
+                onChange={setEditingEndpoints}
+                agentName={agent.name}
+                purpose={agent.manifesto || agent.system_prompt || ""}
+                capabilityKeys={agent.capability_keys}
+              />
               <div className="actions">
                 <button onClick={() => setEditingEndpoints(null)} disabled={savingEndpoints}>
                   Cancel

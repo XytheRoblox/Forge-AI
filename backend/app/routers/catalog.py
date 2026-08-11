@@ -1,7 +1,9 @@
+import jsonschema
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app import docker_manager, llm_client, mcp_manager
+from app.build_pipeline import _sample_payload
 from app.registry import CAPABILITY_OPTIONS, ENDPOINT_TEMPLATES, MODEL_OPTIONS
 from app.schemas import CapabilityOption, EndpointTemplate, ModelOption
 
@@ -47,6 +49,43 @@ def list_endpoint_templates():
         t.model_copy(update={"suggested_capability_name": names.get(t.suggested_capability or "")})
         for t in ENDPOINT_TEMPLATES
     ]
+
+
+class SuggestEndpointsRequest(BaseModel):
+    name: str = ""
+    purpose: str = ""
+    capability_keys: list[str] = []
+    taken_paths: list[str] = []
+
+
+@router.post("/endpoint-templates/recommend")
+def suggest_endpoints(payload: SuggestEndpointsRequest):
+    """Propose endpoints that fit this particular agent.
+
+    Never fails: the wizard shows suggestions when there are some and the
+    stock templates alone when there aren't, so a Groq hiccup can't stand
+    between someone and an endpoint they could have added by hand.
+
+    Each suggestion is put through the same probe the deploy smoke test uses,
+    because a suggestion that fails to deploy is worse than no suggestion —
+    the failure would surface minutes later, on a build, attributed to
+    something the user chose rather than something we generated."""
+    names = {c.key: c.name for c in CAPABILITY_OPTIONS}
+    suggestions = llm_client.suggest_endpoints(
+        name=payload.name,
+        purpose=payload.purpose,
+        capability_names=[names[k] for k in payload.capability_keys if k in names],
+        taken_paths=[t.path for t in ENDPOINT_TEMPLATES] + payload.taken_paths,
+    )
+
+    deployable = []
+    for s in suggestions:
+        try:
+            jsonschema.validate(_sample_payload(s["input_schema"]), s["input_schema"])
+        except jsonschema.ValidationError:
+            continue
+        deployable.append(s)
+    return {"recommendations": deployable}
 
 
 @router.get("/docker/status")
