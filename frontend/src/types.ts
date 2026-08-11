@@ -39,6 +39,13 @@ export interface EndpointSpec {
   instruction: string;
 }
 
+export interface CapabilityRecommendation {
+  key: string;
+  name: string;
+  icon: string;
+  reason: string;
+}
+
 /** A ready-made endpoint from the catalog. Everything from `path` down is
  * the EndpointSpec it produces; the fields above it are only for the picker. */
 export interface EndpointTemplate {

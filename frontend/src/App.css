@@ -1592,3 +1592,75 @@ textarea {
   font-weight: 600;
   color: var(--text-h);
 }
+
+/* Recommended capabilities: chips rather than another grid of cards, so the
+   suggestion reads as a shortcut into the picker below rather than a second,
+   competing copy of it. */
+.capability-suggestions {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capability-suggestions-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.capability-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.capability-chip {
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 12px;
+  min-height: 0;
+  white-space: normal;
+  text-align: left;
+  max-width: 320px;
+  background: var(--surface);
+}
+
+button.capability-chip.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.capability-chip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.capability-chip-body strong {
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.capability-chip-body span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.capability-chip-icon,
+.capability-chip-state {
+  flex-shrink: 0;
+}
+
+.capability-chip-state {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: auto;
+}

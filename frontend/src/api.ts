@@ -2,6 +2,7 @@ import type {
   Agent,
   BuildJob,
   CapabilityOption,
+  CapabilityRecommendation,
   ChatMessage,
   EndpointTemplate,
   ModelOption,
@@ -26,6 +27,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   listModels: () => request<ModelOption[]>("/models"),
   listCapabilities: () => request<CapabilityOption[]>("/capabilities"),
+  recommendCapabilities: (purpose: string) =>
+    request<{ recommendations: CapabilityRecommendation[] }>("/capabilities/recommend", {
+      method: "POST",
+      body: JSON.stringify({ purpose }),
+    }),
   listEndpointTemplates: () => request<EndpointTemplate[]>("/endpoint-templates"),
   suggestEndpoints: (payload: {
     name: string;

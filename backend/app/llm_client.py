@@ -75,6 +75,25 @@ Respond with ONLY a JSON object, no markdown fence:
 {{"model_id": "<exact id copied from the list above>", "reason": "<one sentence, under 20 words, addressed to the user>"}}"""
 
 
+RECOMMEND_CAPABILITIES_MODEL = "llama-3.3-70b-versatile"
+
+RECOMMEND_CAPABILITIES_PROMPT = """Choose the tools an AI agent with this purpose actually needs:
+---
+{purpose}
+---
+
+The tools available, one per line as `key — name: what it does`:
+{catalog}
+
+Pick only what the purpose genuinely calls for. An agent that answers from what it already
+knows needs nothing; recommending a tool it never calls just adds a container and a key to
+manage. Two or three is a normal answer, zero is a valid one, and more than four almost
+never is. Prefer a tool that does the job directly over one that could be made to.
+
+Respond with ONLY a JSON object, no markdown fence:
+{{"capabilities": [{{"key": "<exact key copied from the list above>", "reason": "<a sentence of six to twelve words saying what THIS agent would use it for: \"Check the student\u2019s algebra before marking it wrong\", not \"Check algebra\">"}}]}}"""
+
+
 SUGGEST_ENDPOINTS_MODEL = "llama-3.3-70b-versatile"
 
 SUGGEST_ENDPOINTS_PROMPT = """Design API endpoints for a specific AI agent, for developers who \
@@ -510,4 +529,62 @@ def suggest_endpoints(
         if endpoint:
             taken.add(endpoint["path"])
             out.append(endpoint)
+    return out
+
+
+def recommend_capabilities(purpose: str, options: list, limit: int = 4) -> list[dict]:
+    """Suggest the capabilities this agent's purpose actually calls for.
+
+    Only wired capabilities are offered to the model: an unwired one attaches
+    but does nothing, so recommending it would be advice to add something that
+    can't work yet. Keys are checked against the catalog rather than trusted —
+    an invented key would render a card that toggles nothing."""
+    import json
+
+    wired = [o for o in options if o.wired]
+    if not purpose.strip() or not wired:
+        return []
+    catalog = "\n".join(f"{o.key} — {o.name}: {o.description}" for o in wired)
+    try:
+        client = _get_groq()
+        response = client.chat.completions.create(
+            model=RECOMMEND_CAPABILITIES_MODEL,
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": RECOMMEND_CAPABILITIES_PROMPT.format(
+                        purpose=purpose.strip()[:1500], catalog=catalog
+                    ),
+                }
+            ],
+        )
+        text = _strip_thinking(response.choices[0].message.content or "")
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            return []
+        parsed = json.loads(text[start : end + 1])
+    except Exception:  # noqa: BLE001 - a missing suggestion is not an error
+        return []
+
+    by_key = {o.key: o for o in wired}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for raw in parsed.get("capabilities") or []:
+        if len(out) >= limit:
+            break
+        if not isinstance(raw, dict):
+            continue
+        chosen = by_key.get(str(raw.get("key") or "").strip())
+        if chosen is None or chosen.key in seen:
+            continue
+        seen.add(chosen.key)
+        out.append(
+            {
+                "key": chosen.key,
+                "name": chosen.name,
+                "icon": chosen.icon,
+                "reason": str(raw.get("reason") or "").strip()[:120],
+            }
+        )
     return out

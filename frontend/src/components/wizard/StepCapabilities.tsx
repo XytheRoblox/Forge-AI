@@ -1,14 +1,43 @@
-import { useState } from "react";
-import type { Agent, CapabilityOption } from "../../types";
+import { useEffect, useState } from "react";
+import { api } from "../../api";
+import type { Agent, CapabilityOption, CapabilityRecommendation } from "../../types";
 import type { StepProps } from "./types";
 
 interface Props extends StepProps {
   capabilities: CapabilityOption[];
   agent: Agent | null;
+  /** What the agent is for, taken from the Purpose step. Empty if skipped. */
+  purpose: string;
 }
 
-export function StepCapabilities({ state, update, capabilities, agent }: Props) {
+export function StepCapabilities({ state, update, capabilities, agent, purpose }: Props) {
   const [openKeyPanel, setOpenKeyPanel] = useState<string | null>(null);
+  const [tips, setTips] = useState<CapabilityRecommendation[]>([]);
+  const [loadingTips, setLoadingTips] = useState(false);
+
+  // Asked once per purpose, like the model suggestion on the previous step.
+  // A failure is silent by design: the full picker below is the real control,
+  // and a broken suggestion shouldn't sit in front of it.
+  useEffect(() => {
+    if (!purpose.trim()) {
+      setTips([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTips(true);
+    api
+      .recommendCapabilities(purpose)
+      .then((r) => {
+        if (!cancelled) setTips(r.recommendations);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoadingTips(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [purpose]);
 
   function toggle(key: string) {
     const next = state.capability_keys.includes(key)
@@ -38,6 +67,38 @@ export function StepCapabilities({ state, update, capabilities, agent }: Props) 
         container. Not-yet-wired capabilities can still be attached now — they're recorded on the
         agent, but won't do anything until this platform's library finishes wiring them up.
       </p>
+
+      {(loadingTips || tips.length > 0) && (
+        <div className="capability-suggestions">
+          <div className="capability-suggestions-head">
+            <span>Recommended for this agent</span>
+            {loadingTips && <span className="field-hint">Reading what this agent is for…</span>}
+          </div>
+          {tips.length > 0 && (
+            <div className="capability-suggestion-chips">
+              {tips.map((t) => {
+                const on = state.capability_keys.includes(t.key);
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={`capability-chip ${on ? "on" : ""}`}
+                    onClick={() => toggle(t.key)}
+                    title={on ? "Attached — click to remove" : "Click to attach"}
+                  >
+                    <span className="capability-chip-icon">{t.icon}</span>
+                    <span className="capability-chip-body">
+                      <strong>{t.name}</strong>
+                      <span>{t.reason}</span>
+                    </span>
+                    <span className="capability-chip-state">{on ? "✓" : "+"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {missingKeys.length > 0 && (
         <div className="capability-key-warning">

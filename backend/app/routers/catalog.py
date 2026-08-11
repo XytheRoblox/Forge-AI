@@ -51,6 +51,19 @@ def list_endpoint_templates():
     ]
 
 
+@router.post("/capabilities/recommend")
+def recommend_capabilities(payload: RecommendRequest):
+    """Suggest the tools this agent's purpose calls for.
+
+    Same never-fails contract as the model recommendation: the step shows
+    suggestions when there are some, and the full picker alone when there
+    aren't."""
+    purpose = payload.purpose.strip()
+    if not purpose:
+        return {"recommendations": []}
+    return {"recommendations": llm_client.recommend_capabilities(purpose, CAPABILITY_OPTIONS)}
+
+
 class SuggestEndpointsRequest(BaseModel):
     name: str = ""
     purpose: str = ""
