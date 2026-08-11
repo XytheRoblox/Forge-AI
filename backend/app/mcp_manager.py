@@ -127,10 +127,10 @@ MCP_SERVER_SPECS = {
     # still only read from the container's env at startup (no per-call
     # override), so these remain platform-key-only, not per-agent BYOK.
     # A NEW risk specific to bundling: one named server crashing at startup
-    # (e.g. brave_search with no BRAVE_API_KEY) can take the whole process
-    # — and every OTHER capability in that pack — down with it. Each pack's
-    # own entrypoint.sh guards against this by only including a keyed named
-    # server in the command line when its env var is actually present.
+    # for want of its API key can take the whole process — and every OTHER
+    # capability in that pack — down with it. Each pack's entrypoint.sh
+    # guards against this by only including a keyed named server in the
+    # command line when its env var is actually present.
     "time": {
         "build_dir": MCP_SERVERS_DIR / "research_pack",
         "container_name": "forge-mcp-research-pack",
@@ -153,14 +153,6 @@ MCP_SERVER_SPECS = {
         "image_tag": "forge-mcp-research-pack:latest",
         "internal_port": 8000,
         "sse_path": "/servers/sequential_thinking/sse",
-        "env_passthrough": [],
-    },
-    "brave_search": {
-        "build_dir": MCP_SERVERS_DIR / "research_pack",
-        "container_name": "forge-mcp-research-pack",
-        "image_tag": "forge-mcp-research-pack:latest",
-        "internal_port": 8000,
-        "sse_path": "/servers/brave_search/sse",
         "env_passthrough": [],
     },
     "filesystem": {
@@ -188,7 +180,6 @@ MCP_SERVER_SPECS = {
 # "env_passthrough"/"volume" entry above. Keyed by container_name instead,
 # so it applies no matter which pack member triggers creation.
 _PACK_ENV_PASSTHROUGH = {
-    "forge-mcp-research-pack": ["BRAVE_API_KEY"],
     "forge-mcp-dev-pack": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
 }
 
@@ -215,6 +206,34 @@ def _wait_for_port(host_port: int, timeout: float = 60.0) -> None:
             last_error = exc
             time.sleep(0.5)
     raise RuntimeError(f"MCP server did not start listening in time ({last_error}).")
+
+
+def _assert_container_healthy(container, mcp_server_key: str, restarts_before: int) -> None:
+    """Fail a capability that came up dead, rather than reporting it started.
+
+    _wait_for_port only proves something accepted a TCP connection on the
+    PUBLISHED port — and Docker's userland proxy accepts on that port whether
+    or not anything inside the container is actually listening. A server that
+    exits immediately therefore sails through the port check while its
+    container sits in a crash loop, and the agent only finds out later when
+    every tool call fails. Comparing the restart count across the startup
+    window catches exactly that, without flagging a long-running container
+    that happened to restart legitimately at some point in the past."""
+    container.reload()
+    status = container.status
+    restarts_after = container.attrs.get("RestartCount", 0)
+    if status == "running" and restarts_after == restarts_before:
+        return
+    try:
+        logs = container.logs(tail=15).decode("utf-8", "replace").strip()
+    except Exception:  # noqa: BLE001 - diagnostics only; never mask the real failure
+        logs = "(no logs available)"
+    reason = (
+        f"it is {status}" if status != "running" else f"it restarted {restarts_after - restarts_before}x while starting"
+    )
+    raise RuntimeError(
+        f"the {mcp_server_key!r} container did not stay up — {reason}. Last output:\n{logs}"
+    )
 
 
 def ensure_running(mcp_server_key: str) -> str:
@@ -266,7 +285,9 @@ def ensure_running(mcp_server_key: str) -> str:
     if not bindings:
         raise RuntimeError(f"MCP server {mcp_server_key!r} did not publish its port.")
     host_port = int(bindings[0]["HostPort"])
+    restarts_before = container.attrs.get("RestartCount", 0)
     _wait_for_port(host_port)
+    _assert_container_healthy(container, mcp_server_key, restarts_before)
 
     if CAPABILITIES_HOST:
         return f"http://{CAPABILITIES_HOST}:{host_port}{spec['sse_path']}"

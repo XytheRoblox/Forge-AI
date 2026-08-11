@@ -1,4 +1,11 @@
-import type { Agent, BuildJob, CapabilityOption, ChatMessage, ModelOption } from "./types";
+import type {
+  Agent,
+  BuildJob,
+  CapabilityOption,
+  ChatMessage,
+  ModelOption,
+  ModelRecommendation,
+} from "./types";
 
 const BASE_URL = "http://localhost:8000/api";
 
@@ -39,10 +46,25 @@ export const api = {
   getBuildStatus: (id: number, jobId: string) =>
     request<BuildJob>(`/agents/${id}/build/${jobId}`),
   stopAgent: (id: number) => request<Agent>(`/agents/${id}/stop`, { method: "POST" }),
+  restartAgent: (id: number) => request<Agent>(`/agents/${id}/restart`, { method: "POST" }),
+  regenerateWebpage: (id: number) =>
+    request<Agent>(`/agents/${id}/regenerate-webpage`, { method: "POST" }),
   updateTheme: (id: number, theme_color: string) =>
     request<Agent>(`/agents/${id}/theme`, {
       method: "PATCH",
       body: JSON.stringify({ theme_color }),
+    }),
+
+  googleOAuthStatus: () => request<{ configured: boolean; redirect_uri: string }>("/oauth/google/status"),
+  startGoogleOAuth: (agentId: number) =>
+    request<{ authorization_url: string }>(`/oauth/google/start/${agentId}`, { method: "POST" }),
+  disconnectGoogle: (agentId: number) =>
+    request<{ connected: boolean }>(`/oauth/google/${agentId}`, { method: "DELETE" }),
+
+  recommendModel: (purpose: string) =>
+    request<{ recommendation: ModelRecommendation | null }>("/models/recommend", {
+      method: "POST",
+      body: JSON.stringify({ purpose }),
     }),
 
   getMessages: (id: number) => request<ChatMessage[]>(`/agents/${id}/messages`),

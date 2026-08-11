@@ -5,6 +5,8 @@ from typing import Optional
 
 import httpx
 
+from app import registry
+
 IMAGE_TAG = "zovo-agent-runtime:latest"
 RUNTIME_DIR = Path(__file__).resolve().parent.parent / "agent_runtime"
 CONTAINER_PORT = 8080
@@ -12,7 +14,6 @@ CONTAINER_PORT = 8080
 NETWORK_NAME = "forge-net"
 
 PROVIDER_ENV_VAR = {
-    "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
     "featherless": "FEATHERLESS_API_KEY",
 }
@@ -138,18 +139,19 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     env = {
         "MODEL_PROVIDER": agent.model_provider,
         "MODEL_ID": agent.model_id,
+        "MODEL_SUPPORTS_VISION": "1" if registry.supports_vision(agent.model_provider, agent.model_id) else "0",
     }
-    if agent.model_provider == "ollama":
-        # No API key needed — instead, point at the shared Ollama container
-        # (already running by the time this runs; the build pipeline's
-        # "Prepare local model" step started it and pulled the model).
-        from app import ollama_manager
-
-        internal_url, _ = ollama_manager.ensure_running()
-        env["OLLAMA_URL"] = internal_url
-    elif agent.model_api_key:
+    if agent.model_api_key:
         env[PROVIDER_ENV_VAR.get(agent.model_provider, "API_KEY")] = agent.model_api_key
     elif agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
+        env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
+
+    # The vision sidecar runs on Featherless no matter which provider the
+    # agent's own model uses, so a text-only agent still needs a Featherless
+    # key in its container to be able to see images. Only the platform key is
+    # used here — an agent's own key belongs to its chosen provider and may
+    # not be a Featherless one at all.
+    if "FEATHERLESS_API_KEY" not in env and os.environ.get("FEATHERLESS_API_KEY"):
         env["FEATHERLESS_API_KEY"] = os.environ["FEATHERLESS_API_KEY"]
 
     client = _get_client()
@@ -174,17 +176,71 @@ def deploy(agent, workspace_dir) -> tuple[str, int]:
     return container.id, host_port
 
 
-def chat(agent, history: list[dict]) -> str:
+def live_port(agent) -> Optional[int]:
+    """The host port this agent's container is published on right now, or None
+    if it has no running container.
+
+    Docker hands out a fresh ephemeral port every time a container starts, so
+    a stored port goes stale on any restart — including ones this app didn't
+    perform (a Docker Desktop restart, a machine reboot, `docker restart`).
+    Reading it back from Docker is the only way to be sure the URL handed to a
+    browser actually points at something."""
+    if not is_available():
+        return None
+    from docker.errors import NotFound
+
+    client = _get_client()
+    ref = agent.container_id or _container_name(agent.id)
+    try:
+        container = client.containers.get(ref)
+    except NotFound:
+        return None
+    if container.status != "running":
+        return None
+    container.reload()
+    bindings = (
+        container.attrs.get("NetworkSettings", {})
+        .get("Ports", {})
+        .get(f"{CONTAINER_PORT}/tcp")
+    )
+    if not bindings:
+        return None
+    return int(bindings[0]["HostPort"])
+
+
+def restart(agent) -> int:
+    """Restart this agent's existing container and return its new host port.
+
+    Docker assigns a fresh ephemeral host port on restart, so the caller has
+    to persist the returned port — reusing the old one silently talks to
+    nothing."""
+    from docker.errors import NotFound
+
+    client = _get_client()
+    ref = agent.container_id or _container_name(agent.id)
+    try:
+        container = client.containers.get(ref)
+    except NotFound:
+        raise RuntimeError("This agent has no container to restart — deploy it again.")
+    container.restart(timeout=10)
+    host_port = _wait_for_host_port(container)
+    _wait_for_health(host_port)
+    return host_port
+
+
+def chat(agent, history: list[dict], image: Optional[dict] = None) -> str:
     if not agent.container_port:
         raise RuntimeError("Agent has no running container. Deploy it again.")
+    payload: dict = {"history": history}
+    if image:
+        payload["image"] = image
     try:
         response = httpx.post(
             f"http://localhost:{agent.container_port}/chat",
-            json={"history": history},
-            # Local Ollama models can take well over a minute to load into RAM
-            # on the first request after a deploy (cold-start on CPU-only
-            # hardware) — generous enough to cover that without penalizing
-            # hosted-API agents, which typically reply in a few seconds anyway.
+            json=payload,
+            # Generous enough to cover a slow first request against a hosted
+            # provider (cold client setup, a long multi-tool turn) — normal
+            # replies come back in a few seconds anyway.
             timeout=180.0,
         )
         response.raise_for_status()

@@ -21,20 +21,28 @@ interface Props {
   notify: (message: string, kind?: "success" | "error") => void;
 }
 
+// Purpose comes first so the model step can recommend one for the job the
+// agent is actually being built to do. Picking a model before saying what the
+// agent is for is a guess — and the wrong guess is invisible until the agent
+// answers something badly.
 const STEPS = [
+  { key: "manifesto", label: "Purpose" },
   { key: "model", label: "Model" },
-  { key: "hosting", label: "Hosting" },
   { key: "capabilities", label: "Capabilities" },
-  { key: "manifesto", label: "Manifesto" },
+  { key: "hosting", label: "Hosting" },
   { key: "endpoint", label: "Endpoints" },
   { key: "review", label: "Review & Deploy" },
 ];
 
-function initialState(agent: Agent | null): WizardState {
+function initialState(agent: Agent | null, models: ModelOption[]): WizardState {
+  // Default to whatever the catalog actually offers first, rather than a
+  // hardcoded id — models come and go, and a stale default silently produces
+  // an agent pinned to a model that no longer exists.
+  const fallback = models.find((m) => m.available);
   return {
     name: agent?.name ?? "",
-    model_provider: agent?.model_provider ?? "anthropic",
-    model_id: agent?.model_id ?? "claude-sonnet-5",
+    model_provider: agent?.model_provider ?? fallback?.provider ?? "featherless",
+    model_id: agent?.model_id ?? fallback?.model_id ?? "",
     hosting_mode: agent?.hosting_mode ?? "api",
     model_api_key: "",
     capability_keys: agent?.capability_keys ?? [],
@@ -58,7 +66,7 @@ export function Wizard({
   notify,
 }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [state, setState] = useState<WizardState>(() => initialState(agent));
+  const [state, setState] = useState<WizardState>(() => initialState(agent, models));
   const [autoCreated, setAutoCreated] = useState<Agent | null>(null);
   const [expanding, setExpanding] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -72,13 +80,27 @@ export function Wizard({
   // Creates or updates the underlying agent record without navigating away —
   // used to get a real agent id before calling expand-manifesto, and again
   // for the final save/deploy.
+  // The most recent record we've seen for this agent. Starts as the one
+  // passed in and is replaced on every save or refresh, so state written
+  // server-side — an OAuth grant, for instance — shows up here without
+  // remounting the wizard.
+  const currentAgent = autoCreated ?? agent;
+
   async function ensurePersisted(): Promise<Agent> {
-    const target = agent ?? autoCreated;
-    const saved = target
-      ? await api.updateAgent(target.id, state)
+    const saved = currentAgent
+      ? await api.updateAgent(currentAgent.id, state)
       : await api.createAgent(state);
-    if (!agent) setAutoCreated(saved);
+    setAutoCreated(saved);
     return saved;
+  }
+
+  async function refreshAgent() {
+    if (!currentAgent) return;
+    try {
+      setAutoCreated(await api.getAgent(currentAgent.id));
+    } catch {
+      // Non-fatal: the connect panel just keeps showing its previous state.
+    }
   }
 
   async function handleExpand() {
@@ -130,6 +152,8 @@ export function Wizard({
     }
   }
 
+  // The name lives on the first step (Purpose) and is the one hard requirement
+  // before moving on.
   const canGoNext = stepIndex !== 0 || state.name.trim().length > 0;
   const isReview = stepIndex === STEPS.length - 1;
 
@@ -151,7 +175,14 @@ export function Wizard({
   let stepContent;
   switch (STEPS[stepIndex].key) {
     case "model":
-      stepContent = <StepModel state={state} update={update} models={models} />;
+      stepContent = (
+        <StepModel
+          state={state}
+          update={update}
+          models={models}
+          purpose={state.manifesto.trim() || state.system_prompt.trim()}
+        />
+      );
       break;
     case "hosting":
       stepContent = <StepHosting state={state} update={update} />;
@@ -162,7 +193,7 @@ export function Wizard({
           state={state}
           update={update}
           capabilities={capabilities}
-          agent={agent ?? autoCreated}
+          agent={currentAgent}
         />
       );
       break;
@@ -181,23 +212,26 @@ export function Wizard({
           update={update}
           models={models}
           capabilities={capabilities}
-          agent={agent ?? autoCreated}
+          agent={currentAgent}
           onSaveDraft={handleSaveDraft}
           onDeploy={handleDeploy}
           savingDraft={savingDraft}
           deploying={deploying}
           dockerAvailable={dockerAvailable}
           error={error}
+          onAgentChanged={refreshAgent}
+          onPersist={ensurePersisted}
+          notify={notify}
         />
       );
       break;
   }
 
   const subtitles: Record<string, string> = {
-    model: "Give your agent a name and pick the model that powers it.",
+    model: "Pick the model that powers it — we'll suggest one based on the purpose you wrote.",
     hosting: "Choose where this agent actually runs.",
     capabilities: "Attach the tools this agent is allowed to use.",
-    manifesto: "Tell the agent what it's for — in your words, or the model's.",
+    manifesto: "Name your agent and say what it's for. Everything after this builds on it.",
     endpoint: "Optionally add API endpoints for developers integrating this agent into their own code.",
     review: "Double-check everything, then save it or take it live.",
   };

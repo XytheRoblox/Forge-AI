@@ -6,7 +6,7 @@ const OPTIONS = [
     title: "API-hosted",
     available: true,
     description:
-      "Your agent runs as its own Docker container on this machine. When deployed, it calls your chosen model's API (Anthropic or Groq) over the network for every reply.",
+      "Your agent runs as its own Docker container on this machine. When deployed, it calls your chosen model's API over the network for every reply.",
     details: [
       "Spins up a dedicated container per agent",
       "Needs an API key for the model provider you picked",
@@ -15,10 +15,10 @@ const OPTIONS = [
   },
   {
     value: "local",
-    title: "Local model (Ollama)",
-    available: true,
+    title: "Local model",
+    available: false,
     description:
-      "Runs entirely on your own hardware via a shared Ollama container — no data leaves your machine and no API key is required. Pick an Ollama model in the Model step to use this.",
+      "Run inference entirely on your own hardware, with no API key and no data leaving your machine. Not wired up yet — every model in the catalog is currently API-hosted.",
     details: [
       "No external network calls for inference",
       "First deploy downloads the model file (multi-GB) — later deploys reuse it",

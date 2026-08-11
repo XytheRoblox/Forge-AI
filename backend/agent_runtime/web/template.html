@@ -81,6 +81,30 @@
     border-radius: 8px;
     margin-bottom: 6px;
   }
+  /* A generated image is the answer, not an attachment to it, so it gets its
+     own block rather than sitting inline with the sentence around it. */
+  .desmos-graph {
+    width: 100%;
+    height: 320px;
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .desmos-missing {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: normal;
+  }
+  .msg img.gen-image {
+    display: block;
+    margin: 8px 0;
+    max-width: min(100%, 420px);
+    border: 1px solid var(--border);
+  }
   .msg code {
     background: rgba(0, 0, 0, 0.08);
     padding: 1px 5px;
@@ -109,6 +133,154 @@
   .msg .frac-den {
     padding: 0 3px;
   }
+  /* MathJax renders to SVG. currentColor makes the glyphs take the bubble's
+     colour instead of defaulting to black on a dark theme. */
+  .msg mjx-container svg { color: inherit; fill: currentColor; }
+  .msg mjx-container { color: inherit; }
+  .msg .math { white-space: normal; }
+  /* MathJax emits a parallel MathML copy for screen readers. It relies on
+     being clipped out of view, which this bubble's `white-space: pre-wrap`
+     defeats — the result is every equation rendered twice, once as SVG and
+     once as raw text. Clip it explicitly rather than turning the feature off,
+     so assistive tech still reads the maths. */
+  .msg mjx-assistive-mml {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    clip: rect(1px, 1px, 1px, 1px);
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    display: block !important;
+  }
+  /* Display maths gets its own scroller — a long equation must never widen
+     the page. */
+  .msg .math-display {
+    display: block;
+    margin: 8px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-align: center;
+  }
+
+  /* Footer listing the tools a reply used. */
+  .msg-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    white-space: normal;
+  }
+  .msg-tools-label {
+    color: var(--text);
+    opacity: 0.75;
+    letter-spacing: 0.03em;
+  }
+  .tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-bg);
+    color: var(--text-h);
+    border: 1px solid var(--border);
+  }
+  /* The brand's own mark carries the identification, so there's no status dot
+     on a successful call — a chip that's present means it ran. */
+  .tool-chip-icon {
+    font-size: 12px;
+    line-height: 1;
+  }
+  /* A supplied brand mark, shown instead of the emoji. Square-cropped so a
+     logo with odd proportions can't stretch the chip. */
+  .tool-chip-logo {
+    width: 14px;
+    height: 14px;
+    object-fit: contain;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .tool-chip-count {
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Chips are buttons now — they open the request behind them. */
+  button.tool-chip {
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  button.tool-chip:hover { border-color: var(--accent); }
+  button.tool-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button.tool-chip[aria-expanded="true"] {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+
+  .tool-details {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    white-space: normal;
+  }
+  .tool-call {
+    border-left: 2px solid var(--accent);
+    padding-left: 10px;
+  }
+  .tool-call-head {
+    font-size: 11px;
+    color: var(--text-h);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    margin-bottom: 4px;
+  }
+  .tool-call-label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+    opacity: 0.7;
+    margin-top: 6px;
+  }
+  /* Tool output is arbitrary and often long: give it its own scroller and a
+     height ceiling so opening a panel can't push the conversation off screen. */
+  .tool-call-body {
+    margin: 3px 0 0;
+    padding: 7px 9px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-h);
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tool-chip.failed {
+    opacity: 0.8;
+    border-color: #d2504a;
+  }
+  .tool-chip.failed::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #d2504a;
+  }
   .msg.typing {
     gap: 6px;
   }
@@ -131,22 +303,32 @@
     0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
     40% { transform: translateY(-4px); opacity: 1; }
   }
-  .typing-status {
-    font-size: 12px;
-  }
-  .typing-status summary {
-    cursor: pointer;
-    color: var(--text);
-    list-style: none;
-  }
-  .typing-status summary::-webkit-details-marker { display: none; }
-  .typing-status summary::before { content: "▸ "; }
-  .typing-status[open] summary::before { content: "▾ "; }
+  /* The live activity line. Shown outright rather than behind a disclosure —
+     "what is it doing" is the question the spinner already raises, so making
+     the answer a click away just hides the most reassuring thing on screen. */
   .typing-status-text {
-    margin-top: 4px;
+    margin-top: 5px;
     color: var(--text);
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    font-size: 11px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .typing-status-text::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+    animation: status-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes status-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .typing-status-text::before { animation: none; opacity: 0.8; }
   }
   #extra-inputs {
     padding: 0 20px;
@@ -222,6 +404,55 @@
   }
   #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
+<!-- Agent-specific generated theme. Emitted last so it overrides the base
+     variables above, and deliberately limited to :root variables, body
+     font/background and a fixed set of decorative patterns — the layout and
+     chat behaviour above can't be reached from here. -->
+<style>
+  __AGENT_THEME_CSS__
+</style>
+<!-- Full TeX, via MathJax. KaTeX was here first and is faster, but it
+     implements a SUBSET of LaTeX — it rejects the AMS environments a maths
+     agent reaches for constantly (align, cases, matrices), \newcommand, and
+     much of amsmath. MathJax's TeX input handles those, which is the whole
+     point of putting maths on the page.
+
+     Loaded from a CDN rather than vendored into every agent image, and
+     entirely optional: if it fails to load, renderRichText's own macro
+     substitution still runs, so maths degrades to approximate rather than to
+     raw source. -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [["\\(", "\\)"]],
+      displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+      processEscapes: true,
+      // The AMS packages are the reason for choosing MathJax over KaTeX.
+      packages: { "[+]": ["ams", "newcommand", "noerrors", "noundefined"] },
+    },
+    // The page renders maths itself, span by span, from stashed source — a
+    // global typeset pass would also rewrite user text that merely looks like
+    // maths.
+    startup: {
+      typeset: false,
+      ready: () => {
+        window.MathJax.startup.defaultReady();
+        document.dispatchEvent(new Event("mathjax-ready"));
+      },
+    },
+    options: { enableMenu: false },
+  };
+</script>
+<!-- Desmos, when a key is configured. Injected at build time rather than
+     hardcoded: it's the platform's key, and a page built without one simply
+     omits the script instead of loading a URL that will be rejected. -->
+__DESMOS_SCRIPT__
+<script
+  defer
+  id="MathJax-script"
+  src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"
+  crossorigin="anonymous"
+></script>
 </head>
 <body data-image-upload="__IMAGE_UPLOAD_ENABLED__">
   <header>
@@ -250,6 +481,10 @@
 
   <script>
     const messagesEl = document.getElementById("messages");
+    // Capability key -> data URI, inlined at build time from web/logos.
+    // Empty when no marks have been supplied; every chip then uses its emoji.
+    const TOOL_LOGOS = __TOOL_LOGOS__;
+
     const inputEl = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
     const imageInput = document.getElementById("image-input");
@@ -283,38 +518,189 @@
       rightarrow: "→", leftarrow: "←", sum: "∑", int: "∫", partial: "∂",
     };
 
-    function renderRichText(raw) {
-      let html = escapeHtml(raw);
-
-      // Strip math delimiters, keep their contents for the rules below.
-      html = html.replace(/\$\$([\s\S]+?)\$\$/g, "$1");
-      html = html.replace(/\$([^$\n]+?)\$/g, "$1");
-      html = html.replace(/\\\[([\s\S]+?)\\\]/g, "$1");
-      html = html.replace(/\\\(([\s\S]+?)\\\)/g, "$1");
-
-      // \frac{a}{b}
+    // Approximate math, used when KaTeX isn't available and for expressions
+    // written without delimiters at all (models frequently just type x^2).
+    function approximateMath(html) {
       html = html.replace(
         /\\frac\{([^{}]+)\}\{([^{}]+)\}/g,
         '<span class="frac"><span class="frac-num">$1</span><span class="frac-den">$2</span></span>'
       );
-      // \sqrt{x}
       html = html.replace(/\\sqrt\{([^{}]+)\}/g, "√($1)");
-      // greek letters + common symbol macros
       html = html.replace(/\\([A-Za-z]+)/g, (m, name) => GREEK[name] || SYMBOLS[name] || m);
-
-      // bold, italic, inline code
-      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-      html = html.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
-      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-      // superscripts: ^{...} or ^word
       html = html.replace(/\^\{([^{}]+)\}/g, "<sup>$1</sup>");
       html = html.replace(/\^(-?\w+)/g, "<sup>$1</sup>");
-
+      html = html.replace(/_\{([^{}]+)\}/g, "<sub>$1</sub>");
+      html = html.replace(/_(-?\w+)/g, "<sub>$1</sub>");
       return html;
     }
 
-    function appendMessage(role, content, imageDataUrl) {
+    // Math is pulled out BEFORE anything else touches the string. The markdown
+    // passes below would otherwise eat parts of it — \times becomes ×, a ^ in
+    // an exponent becomes <sup>, and `*` inside a matrix reads as emphasis —
+    // and KaTeX needs the original source, not a half-substituted version.
+    function renderRichText(raw) {
+      const math = [];
+      const stash = (tex, display) => "\u0001M" + (math.push({ tex, display }) - 1) + "\u0001";
+
+      let s = String(raw)
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => stash(t, true))
+        .replace(/\\\[([\s\S]+?)\\\]/g, (m, t) => stash(t, true))
+        .replace(/\\\(([\s\S]+?)\\\)/g, (m, t) => stash(t, false))
+        .replace(/\$([^$\n]+?)\$/g, (m, t) => stash(t, false));
+
+      // Pulled out before anything else, like maths: the block is JSON and
+      // the markdown passes would mangle its braces and backslashes.
+      const graphs = [];
+      s = s.replace(/```desmos\s*([\s\S]*?)```/g, (m, body) => {
+        graphs.push(body.trim());
+        return "\u0002G" + (graphs.length - 1) + "\u0002";
+      });
+
+      s = escapeHtml(s);
+
+      // Markdown images, before emphasis — a generated image arrives as
+      // ![prompt](url), and leaving it as text would show the user a raw link
+      // to something the agent just made for them. Only http(s) is accepted:
+      // a javascript: or data: URL here would be model output becoming a
+      // script or an inline payload.
+      s = s.replace(
+        /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+        (m, alt, url) =>
+          '<img class="gen-image" src="' + url.replace(/"/g, "&quot;") +
+          '" alt="' + alt.replace(/"/g, "&quot;") + '" loading="lazy" />'
+      );
+
+      // bold, italic, inline code
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      s = s.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+      s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+      // Undelimited math in ordinary prose still gets the approximate pass.
+      s = approximateMath(s);
+
+      // Put the math back as inert spans carrying their own source, so
+      // typesetMath can render them — and re-render them later if KaTeX
+      // finishes loading after the message was already on screen.
+      s = s.replace(/\u0002G(\d+)\u0002/g, (m, i) =>
+        '<pre class="desmos-spec">' + escapeHtml(graphs[Number(i)]) + "</pre>"
+      );
+
+      s = s.replace(/\u0001M(\d+)\u0001/g, (m, i) => {
+        const item = math[Number(i)];
+        return (
+          '<span class="math" data-display="' +
+          (item.display ? "1" : "0") +
+          '" data-tex="' +
+          escapeHtml(item.tex).replace(/"/g, "&quot;") +
+          '"></span>'
+        );
+      });
+      return s;
+    }
+
+    // Turns a ```desmos fenced block into a live calculator. Done after the
+    // message is in the DOM because Desmos measures its container, so it can't
+    // be built inside a detached node.
+    function renderDesmos(root) {
+      root.querySelectorAll("pre.desmos-spec").forEach((node) => {
+        let spec;
+        try {
+          spec = JSON.parse(node.textContent);
+        } catch (e) {
+          return; // leave the raw block visible rather than swallowing it
+        }
+        const holder = document.createElement("div");
+        holder.className = "desmos-graph";
+        if (!window.Desmos) {
+          // No key configured, or the script failed. Say so plainly instead
+          // of leaving an empty box the user can't interpret.
+          holder.className = "desmos-missing";
+          holder.textContent =
+            "Graphing isn't configured on this platform: " + spec.expressions.join(", ");
+          node.replaceWith(holder);
+          return;
+        }
+        node.replaceWith(holder);
+        const calc = window.Desmos.GraphingCalculator(holder, {
+          expressions: true,
+          settingsMenu: false,
+          zoomButtons: true,
+          border: false,
+        });
+        spec.expressions.forEach((latex, i) =>
+          calc.setExpression({ id: "e" + i, latex })
+        );
+      });
+    }
+
+    function typesetMath(root) {
+      const ready = window.MathJax && window.MathJax.tex2svgPromise;
+      root.querySelectorAll("span.math").forEach((el) => {
+        const tex = el.dataset.tex || "";
+        const display = el.dataset.display === "1";
+        if (ready) {
+          // tex2svgPromise renders one expression from source, which is what
+          // this page needs — the alternative, typesetting the whole subtree,
+          // would also reinterpret ordinary prose that happens to contain $.
+          window.MathJax.tex2svgPromise(tex, { display })
+            .then((node) => {
+              el.textContent = "";
+              el.appendChild(node);
+              el.classList.toggle("math-display", display);
+            })
+            .catch(() => {
+              el.innerHTML = approximateMath(escapeHtml(tex));
+            });
+          return;
+        }
+        el.innerHTML = approximateMath(escapeHtml(tex));
+      });
+    }
+
+    // MathJax is deferred, so early messages render approximate first;
+    // re-typeset once it lands. data-tex keeps the source, so this is idempotent.
+    document.addEventListener("mathjax-ready", () => typesetMath(document));
+
+    // One block per call, in the order they were made — a tool used four
+    // times shows four requests, since which sub-problem went to it is the
+    // interesting part.
+    function renderToolCalls(group) {
+      const wrap = document.createElement("div");
+      group.calls.forEach((call, index) => {
+        const block = document.createElement("div");
+        block.className = "tool-call";
+
+        const head = document.createElement("div");
+        head.className = "tool-call-head";
+        head.textContent =
+          (group.calls.length > 1 ? "Call " + (index + 1) + " · " : "") +
+          (call.tool || group.name) +
+          (call.ok === false ? " · failed" : "");
+        block.appendChild(head);
+
+        [
+          ["Request", call.args],
+          ["Response", call.result],
+        ].forEach(([label, body]) => {
+          if (!body) return;
+          const tag = document.createElement("div");
+          tag.className = "tool-call-label";
+          tag.textContent = label;
+          const pre = document.createElement("pre");
+          pre.className = "tool-call-body";
+          pre.textContent = body;
+          block.appendChild(tag);
+          block.appendChild(pre);
+        });
+        wrap.appendChild(block);
+      });
+      return wrap;
+    }
+
+    // `tools` is the list this turn actually used, newest reply only. Omitted
+    // entirely when the model answered without calling anything — a permanent
+    // "Tools used: none" row would be noise on most messages.
+    function appendMessage(role, content, imageDataUrl, tools) {
       const div = document.createElement("div");
       div.className = "msg " + role;
       if (imageDataUrl) {
@@ -324,8 +710,98 @@
       }
       const text = document.createElement("span");
       text.innerHTML = renderRichText(content);
+      typesetMath(text);
       div.appendChild(text);
+
+      if (tools && tools.length) {
+        // One chip per tool, not per call. Working a problem in steps means
+        // calling the same tool repeatedly, and five identical chips in a row
+        // says nothing five times — collapse them and carry the count.
+        const grouped = [];
+        const byKey = new Map();
+        tools.forEach((t) => {
+          const key = t.name + "|" + (t.ok === false ? "failed" : "ok");
+          const existing = byKey.get(key);
+          if (existing) {
+            existing.count += 1;
+            existing.calls.push(t);
+            return;
+          }
+          const entry = {
+            name: t.name,
+            icon: t.icon || "",
+            key: t.key || "",
+            ok: t.ok !== false,
+            count: 1,
+            calls: [],
+          };
+          entry.calls.push(t);
+          byKey.set(key, entry);
+          grouped.push(entry);
+        });
+
+        const footer = document.createElement("div");
+        footer.className = "msg-tools";
+        const label = document.createElement("span");
+        label.className = "msg-tools-label";
+        label.textContent = "Used";
+        footer.appendChild(label);
+
+        const details = document.createElement("div");
+        details.className = "tool-details";
+        details.hidden = true;
+
+        grouped.forEach((t) => {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "tool-chip" + (t.ok ? "" : " failed");
+          chip.setAttribute("aria-expanded", "false");
+          const logo = t.key && TOOL_LOGOS[t.key];
+          if (logo) {
+            const img = document.createElement("img");
+            img.className = "tool-chip-logo";
+            img.src = logo;
+            img.alt = "";
+            chip.appendChild(img);
+          } else if (t.icon) {
+            const icon = document.createElement("span");
+            icon.className = "tool-chip-icon";
+            icon.textContent = t.icon;
+            chip.appendChild(icon);
+          }
+          const name = document.createElement("span");
+          name.textContent = t.name;
+          chip.appendChild(name);
+          if (t.count > 1) {
+            const count = document.createElement("span");
+            count.className = "tool-chip-count";
+            count.textContent = "×" + t.count;
+            chip.appendChild(count);
+          }
+          chip.title = "Show what was sent and what came back";
+          chip.addEventListener("click", () => {
+            const alreadyOpen = chip.getAttribute("aria-expanded") === "true";
+            footer.querySelectorAll(".tool-chip").forEach((c) =>
+              c.setAttribute("aria-expanded", "false")
+            );
+            if (alreadyOpen) {
+              details.hidden = true;
+              return;
+            }
+            chip.setAttribute("aria-expanded", "true");
+            details.textContent = "";
+            details.appendChild(renderToolCalls(t));
+            details.hidden = false;
+          });
+          footer.appendChild(chip);
+        });
+        div.appendChild(footer);
+        div.appendChild(details);
+      }
+
       messagesEl.appendChild(div);
+      // After insertion: Desmos sizes itself from its container.
+      renderDesmos(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
     }
@@ -337,8 +813,7 @@
       div.className = "msg assistant typing";
       div.innerHTML =
         '<div class="typing-dots"><span></span><span></span><span></span></div>' +
-        '<details class="typing-status"><summary>What\'s it doing?</summary>' +
-        '<div class="typing-status-text">Reading your message…</div></details>';
+        '<div class="typing-status-text">Reading your message…</div>';
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
@@ -414,7 +889,7 @@
         stopStatusPolling();
         typingBubble.remove();
         if (!response.ok) throw new Error(data.detail || "Request failed");
-        appendMessage("assistant", data.reply);
+        appendMessage("assistant", data.reply, null, data.tools);
         history.push({ role: "assistant", content: data.reply });
       } catch (err) {
         stopStatusPolling();

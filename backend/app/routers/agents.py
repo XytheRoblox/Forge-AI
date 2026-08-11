@@ -1,7 +1,9 @@
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app import build_pipeline, docker_manager, llm_client, workspace
+from app import build_pipeline, cloudrun_manager, docker_manager, llm_client, webpage_gen, workspace
 from app.db import get_session
 from app.models import Agent, Message
 from app.schemas import (
@@ -21,11 +23,50 @@ from app.schemas import (
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
+def _cloudrun() -> bool:
+    """Whether agents run as Cloud Run services rather than local containers.
+
+    Read per call rather than captured at import so the process doesn't have to
+    restart for a DEPLOY_MODE change to take effect."""
+    return os.environ.get("DEPLOY_MODE", "local") == "cloudrun"
+
+
 def _get_agent_or_404(agent_id: int, session: Session) -> Agent:
     agent = session.get(Agent, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
+
+
+def _reconcile_container(agent, session: Session) -> None:
+    """Bring a deployed agent's stored container port back in line with Docker.
+
+    The frontend builds the agent's webpage URL straight from container_port,
+    so a stale port shows up as a flat "connection refused" in the browser
+    with the container sitting there healthy on a different port. Docker
+    reassigns that port on every start, and plenty of restarts don't go
+    through this app at all — Docker Desktop restarting, a reboot, a manual
+    `docker restart`. Reconciling on read keeps the record honest, and demotes
+    an agent whose container has genuinely gone away to draft so the UI stops
+    offering a dead link.
+
+    Local Docker only: a Cloud Run service keeps one stable URL and publishes
+    no ephemeral port, so this would find no container and wrongly demote a
+    perfectly healthy agent."""
+    if agent.status != "deployed" or _cloudrun():
+        return
+    port = docker_manager.live_port(agent)
+    if port == agent.container_port:
+        return
+    if port is None:
+        agent.status = "draft"
+        agent.container_id = None
+        agent.container_port = None
+    else:
+        agent.container_port = port
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
 
 
 @router.post("", response_model=AgentRead)
@@ -39,12 +80,17 @@ def create_agent(payload: AgentCreate, session: Session = Depends(get_session)):
 
 @router.get("", response_model=list[AgentRead])
 def list_agents(session: Session = Depends(get_session)):
-    return session.exec(select(Agent).order_by(Agent.created_at.desc())).all()
+    agents = session.exec(select(Agent).order_by(Agent.created_at.desc())).all()
+    for agent in agents:
+        _reconcile_container(agent, session)
+    return agents
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
 def get_agent(agent_id: int, session: Session = Depends(get_session)):
-    return _get_agent_or_404(agent_id, session)
+    agent = _get_agent_or_404(agent_id, session)
+    _reconcile_container(agent, session)
+    return agent
 
 
 @router.patch("/{agent_id}", response_model=AgentRead)
@@ -69,7 +115,10 @@ def update_agent(agent_id: int, payload: AgentUpdate, session: Session = Depends
 @router.delete("/{agent_id}", status_code=204)
 def delete_agent(agent_id: int, session: Session = Depends(get_session)):
     agent = _get_agent_or_404(agent_id, session)
-    docker_manager.stop_and_remove(agent)
+    if _cloudrun():
+        cloudrun_manager.stop_agent(agent)
+    else:
+        docker_manager.stop_and_remove(agent)
     workspace.remove_workspace(agent_id)
     for message in session.exec(select(Message).where(Message.agent_id == agent_id)).all():
         session.delete(message)
@@ -122,13 +171,67 @@ def update_theme(agent_id: int, payload: ThemeUpdate, session: Session = Depends
 @router.post("/{agent_id}/stop", response_model=AgentRead)
 def stop_agent(agent_id: int, session: Session = Depends(get_session)):
     agent = _get_agent_or_404(agent_id, session)
-    docker_manager.stop_and_remove(agent)
+    if _cloudrun():
+        cloudrun_manager.stop_agent(agent)
+    else:
+        docker_manager.stop_and_remove(agent)
     agent.status = "draft"
     agent.container_id = None
     agent.container_port = None
     session.add(agent)
     session.commit()
     session.refresh(agent)
+    return agent
+
+
+@router.post("/{agent_id}/restart", response_model=AgentRead)
+def restart_agent(agent_id: int, session: Session = Depends(get_session)):
+    """Restart the agent's existing container in place.
+
+    Distinct from stop (which tears the container down and drops the agent
+    back to draft) and from build (which re-runs the whole pipeline): this
+    keeps the same container and the same workspace, so it's the cheap way to
+    recover a wedged agent. The published port changes on restart, so the
+    stored port is refreshed from Docker afterwards."""
+    agent = _get_agent_or_404(agent_id, session)
+    if agent.status != "deployed":
+        raise HTTPException(status_code=400, detail="Agent isn't running — deploy it first.")
+    if _cloudrun():
+        raise HTTPException(
+            status_code=400,
+            detail="Cloud Run services restart themselves — redeploy this agent instead.",
+        )
+    try:
+        port = docker_manager.restart(agent)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    agent.container_port = port
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+@router.post("/{agent_id}/regenerate-webpage", response_model=AgentRead)
+def regenerate_webpage(agent_id: int, session: Session = Depends(get_session)):
+    """Rebuild ONLY the agent's chat page, with a freshly generated theme.
+
+    The page lives in the workspace directory that's bind-mounted into the
+    container and is re-read from disk on every request, so rewriting the file
+    is enough — no image rebuild, no container restart, and the agent keeps
+    running and keeps its memory."""
+    agent = _get_agent_or_404(agent_id, session)
+    workspace_path = workspace.workspace_dir(agent.id)
+    try:
+        html, theme = webpage_gen.generate_webpage(agent)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    (workspace_path / "web" / "index.html").write_text(html)
+    agent.theme_color = theme.get("accent", agent.theme_color)
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    workspace.write_theme(agent)
     return agent
 
 
@@ -150,16 +253,30 @@ def chat_with_agent(agent_id: int, payload: ChatRequest, session: Session = Depe
         select(Message).where(Message.agent_id == agent_id).order_by(Message.created_at)
     ).all()
 
-    user_message = Message(agent_id=agent_id, role="user", content=payload.message)
+    # The image itself is deliberately not persisted on the Message — the
+    # transcript stays text-only, and the note the runtime splices in (either
+    # the sidecar's description or a native image block) lives only in the
+    # single turn it was uploaded for.
+    stored_content = payload.message
+    if payload.image:
+        stored_content = f"{payload.message}\n\n[image attached]" if payload.message else "[image attached]"
+    user_message = Message(agent_id=agent_id, role="user", content=stored_content)
     session.add(user_message)
     session.commit()
     session.refresh(user_message)
 
     history = [{"role": m.role, "content": m.content} for m in prior]
-    history.append({"role": "user", "content": payload.message})
+    history.append({"role": "user", "content": payload.message or "What is in this image?"})
 
     try:
-        reply_text = docker_manager.chat(agent, history)
+        if _cloudrun():
+            # cloudrun_manager.chat has no image parameter — images are a
+            # local-runtime feature until the Cloud Run path is exercised.
+            reply_text = cloudrun_manager.chat(agent, history)
+        else:
+            reply_text = docker_manager.chat(
+                agent, history, image=payload.image.model_dump() if payload.image else None
+            )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

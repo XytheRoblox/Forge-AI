@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Header } from "./components/Header";
-import { ToastStack, useToasts } from "./components/Toasts";
+import { ToastStack } from "./components/Toasts";
+import { useToasts } from "./components/useToasts";
 import { Wizard } from "./components/wizard/Wizard";
 import { AgentPage } from "./pages/AgentPage";
 import { BuildingPage } from "./pages/BuildingPage";
@@ -47,6 +48,12 @@ function App() {
   function handleOpen(agent: Agent) {
     if (agent.status === "deployed") {
       setView({ name: "agent", agentId: agent.id });
+      // The agent page builds its iframe URL from container_port, and Docker
+      // reassigns that port on every container start. Whatever was fetched
+      // when this list last loaded may already be stale, which renders as a
+      // "connection refused" page instead of the agent — so re-read the
+      // record (the backend reconciles it against Docker) on the way in.
+      refreshAgents().catch(() => undefined);
     } else {
       setView({ name: "wizard", agentId: agent.id });
     }
@@ -82,9 +89,12 @@ function App() {
     setView({ name: "wizard", agentId });
   }
 
-  async function handleStopped() {
+  // Refreshes the list but keeps the user where they are. Restarting an
+  // agent, regenerating its page, or connecting an account are all things you
+  // do while looking at the agent — being thrown back to the list each time
+  // makes them feel like they failed.
+  async function handleAgentUpdated() {
     await refreshAgents();
-    goHome();
   }
 
   async function handleRebuild(agent: Agent) {
@@ -146,8 +156,9 @@ function App() {
         {view.name === "agent" && currentAgent && (
           <AgentPage
             agent={currentAgent}
+            capabilities={capabilities}
             onBack={goHome}
-            onStopped={handleStopped}
+            onAgentUpdated={handleAgentUpdated}
             onRebuild={handleRebuild}
             notify={notify}
           />

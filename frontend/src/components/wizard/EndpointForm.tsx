@@ -33,7 +33,7 @@ function parseSpec(text: string): EndpointSpec[] {
   if (doc.paths && typeof doc.paths === "object") {
     const endpoints: EndpointSpec[] = [];
     for (const [path, operations] of Object.entries<Record<string, unknown>>(doc.paths)) {
-      for (const [method, op] of Object.entries<Record<string, unknown>>(operations)) {
+      for (const [method, op] of Object.entries(operations)) {
         if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
         const operation = op as {
           summary?: string;

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EndpointSpec(BaseModel):
@@ -21,8 +21,10 @@ class CronJobSpec(BaseModel):
 
 class AgentCreate(BaseModel):
     name: str
-    model_provider: str = "anthropic"
-    model_id: str = "claude-sonnet-5"
+    # Kept in sync by hand with registry.MODEL_OPTIONS — registry imports this
+    # module, so it can't be imported back here to derive the default.
+    model_provider: str = "featherless"
+    model_id: str = "Qwen/Qwen2.5-72B-Instruct"
     hosting_mode: str = "api"
     manifesto: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -70,9 +72,9 @@ class AgentRead(BaseModel):
     container_port: Optional[int]
     service_url: Optional[str]
     cloudrun_service_name: Optional[str]
+    connected_accounts: dict[str, str] = {}
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ThemeUpdate(BaseModel):
@@ -87,8 +89,14 @@ class ExpandManifestoResponse(BaseModel):
     system_prompt: str
 
 
+class ChatImage(BaseModel):
+    data: str  # base64, no data: URI prefix
+    media_type: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    image: Optional[ChatImage] = None
 
 
 class MessageRead(BaseModel):
@@ -97,8 +105,7 @@ class MessageRead(BaseModel):
     content: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatResponse(BaseModel):
@@ -107,8 +114,10 @@ class ChatResponse(BaseModel):
 
 
 class ModelOption(BaseModel):
-    provider: str
+    provider: str  # who serves it — drives which client the runtime uses
     provider_label: str
+    family: str  # who built the weights — drives how the picker groups them
+    family_label: str
     model_id: str
     label: str
     description: str
@@ -125,6 +134,11 @@ class CapabilityOption(BaseModel):
     requires_api_key: bool = False
     api_key_help: Optional[str] = None
     platform_key_available: bool = False
+    # Set when the capability reaches a third party's account rather than a
+    # keyed API — the wizard asks the user to authorise instead of asking for
+    # a key. One grant covers every capability sharing the provider.
+    oauth_provider: Optional[str] = None
+    oauth_scopes: list[str] = []
 
 
 class BuildStepStatus(BaseModel):
@@ -132,8 +146,7 @@ class BuildStepStatus(BaseModel):
     status: str  # "pending" | "running" | "success" | "failed"
     detail: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BuildJobRead(BaseModel):
@@ -142,8 +155,7 @@ class BuildJobRead(BaseModel):
     status: str  # "running" | "success" | "failed"
     steps: list[BuildStepStatus]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BuildStartResponse(BaseModel):

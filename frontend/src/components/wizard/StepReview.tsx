@@ -1,5 +1,6 @@
 import type { Agent, CapabilityOption, ModelOption } from "../../types";
 import { CronJobList } from "./CronJobList";
+import { GoogleConnect } from "./GoogleConnect";
 import type { StepProps } from "./types";
 
 interface Props extends StepProps {
@@ -12,6 +13,9 @@ interface Props extends StepProps {
   deploying: boolean;
   dockerAvailable: boolean | null;
   error: string | null;
+  onAgentChanged: () => void;
+  onPersist: () => Promise<Agent>;
+  notify: (message: string, kind?: "success" | "error") => void;
 }
 
 export function StepReview({
@@ -26,12 +30,21 @@ export function StepReview({
   deploying,
   dockerAvailable,
   error,
+  onAgentChanged,
+  onPersist,
+  notify,
 }: Props) {
   const model = models.find(
     (m) => m.provider === state.model_provider && m.model_id === state.model_id
   );
   const selectedCapabilities = capabilities.filter((c) => state.capability_keys.includes(c.key));
   const keyedCapabilities = selectedCapabilities.filter((c) => c.requires_api_key);
+  const googleCapabilities = selectedCapabilities.filter((c) => c.oauth_provider === "google");
+  // An agent that needs a Google account but has no grant would deploy and
+  // then fail on its first real request, so this blocks deploy the same way a
+  // missing API key does.
+  const missingGoogleConnection =
+    googleCapabilities.length > 0 && !agent?.connected_accounts?.google;
   const missingModelKey =
     state.hosting_mode === "api" &&
     state.model_provider !== "featherless" &&
@@ -46,6 +59,13 @@ export function StepReview({
 
   return (
     <div className="wizard-section">
+      <GoogleConnect
+        capabilities={googleCapabilities}
+        agent={agent}
+        onPersist={onPersist}
+        onChanged={onAgentChanged}
+        notify={notify}
+      />
       <div className="review-grid">
         <div className="review-row">
           <span className="review-label">Name</span>
@@ -147,6 +167,14 @@ export function StepReview({
         </div>
       ))}
 
+      {missingGoogleConnection && (
+        <div className="error">
+          {googleCapabilities.map((c) => c.name).join(" and ")}{" "}
+          {googleCapabilities.length === 1 ? "needs" : "need"} a connected Google account — use
+          Authorize with Google above before deploying.
+        </div>
+      )}
+
       {dockerAvailable === false && (
         <div className="docker-banner">
           Docker isn't reachable right now, so Deploy will fail until Docker Desktop is running.
@@ -172,7 +200,8 @@ export function StepReview({
             !state.name.trim() ||
             !state.system_prompt.trim() ||
             missingModelKey ||
-            missingCapabilityKeys.length > 0
+            missingCapabilityKeys.length > 0 ||
+            missingGoogleConnection
           }
         >
           {deploying ? "Deploying…" : "🚀 Deploy"}

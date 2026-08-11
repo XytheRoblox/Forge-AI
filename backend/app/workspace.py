@@ -2,13 +2,22 @@ import json
 import shutil
 from pathlib import Path
 
+import os
+
+from app.registry import (
+    CAPABILITY_OPTIONS,
+    GOOGLE_STDIO_SERVER,
+    GOOGLE_TOOLS,
+    STDIO_SERVERS,
+)
+
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent / "agent_workspaces"
 
 SYSTEM_PROMPT_FENCE_START = "## System Prompt\n```\n"
 SYSTEM_PROMPT_FENCE_END = "\n```\n"
 
 MEMORY_SECTION_HEADER = "## Memory"
-TOOL_CACHE_SECTION_HEADER = "## Tool Response Cache"
+TOOL_LOG_SECTION_HEADER = "## Tool Call Log"
 
 
 def workspace_dir(agent_id: int) -> Path:
@@ -43,12 +52,17 @@ def write_cache_if_missing(agent) -> None:
     path = workspace_dir(agent.id) / "CACHE.md"
     if path.exists():
         return
+    # Memory is long-term and survives everything; the tool call log is
+    # working memory for multi-step tasks, written by the runtime after every
+    # tool call and trimmed to the most recent handful. (An earlier "## Tool
+    # Response Cache" section lived here that nothing ever read or wrote —
+    # this replaces it with one the runtime actually uses.)
     content = f"""# Cache
 
 {MEMORY_SECTION_HEADER}
 (empty)
 
-{TOOL_CACHE_SECTION_HEADER}
+{TOOL_LOG_SECTION_HEADER}
 (empty)
 """
     path.write_text(content)
@@ -88,19 +102,65 @@ def write_capabilities(agent, capability_urls: dict[str, str], effective_keys: d
     own key if it provided one, else a rotated platform-provided key — the
     shared MCP server container has no key of its own, so a key must ride
     along with every tool call instead."""
-    entries = [
-        {"key": key, "mcp_url": url, "api_key": effective_keys.get(key)}
-        for key, url in capability_urls.items()
-    ]
+    # The display name and icon ride along so the runtime can label a tool call
+    # by its capability's brand ("WolframAlpha 🧮") rather than by the raw MCP
+    # tool identifier. registry is the single source of truth for both.
+    meta = {c.key: c for c in CAPABILITY_OPTIONS}
+    entries = []
+    for key, url in capability_urls.items():
+        entry = {
+            "key": key,
+            "api_key": effective_keys.get(key),
+            "label": meta[key].name if key in meta else key,
+            "icon": meta[key].icon if key in meta else "",
+        }
+        capability = meta.get(key)
+        if capability is not None and capability.oauth_provider == "google":
+            # Every Google capability is the same process; GOOGLE_CAPABILITIES
+            # decides which tools it exposes, so an agent with only Calendar
+            # isn't offered Classroom tools it has no scope for. The REFRESH
+            # token goes in rather than an access token — the server
+            # re-exchanges it, so the agent keeps working past the hour an
+            # access token lasts.
+            grant = (agent.oauth_grants or {}).get("google") or {}
+            google_keys = [
+                k
+                for k in agent.capability_keys
+                if (meta.get(k) and meta[k].oauth_provider == "google")
+            ]
+            entry["transport"] = "stdio"
+            entry["command"] = GOOGLE_STDIO_SERVER["command"]
+            entry["args"] = GOOGLE_STDIO_SERVER["args"]
+            entry["env"] = {
+                "GOOGLE_CLIENT_ID": os.environ.get("GOOGLE_CLIENT_ID", ""),
+                "GOOGLE_CLIENT_SECRET": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+                "GOOGLE_REFRESH_TOKEN": grant.get("refresh_token") or "",
+                "GOOGLE_CAPABILITIES": ",".join(google_keys),
+            }
+            # Only claim the tools this capability actually owns, so a chip
+            # names the product the call went to.
+            entry["tools"] = GOOGLE_TOOLS.get(key, [])
+            entries.append(entry)
+            continue
+
+        launch = STDIO_SERVERS.get(key)
+        if launch:
+            # Hosted by the agent itself: the runtime spawns this as a
+            # subprocess. The credential goes in as an env var for that
+            # process alone, which is what gives each agent its own.
+            entry["transport"] = "stdio"
+            entry["command"] = launch["command"]
+            entry["args"] = launch["args"]
+            env = {}
+            if launch.get("key_env") and effective_keys.get(key):
+                env[launch["key_env"]] = effective_keys[key]
+            entry["env"] = env
+        else:
+            entry["transport"] = "sse"
+            entry["mcp_url"] = url
+        entries.append(entry)
     path = workspace_dir(agent.id) / "capabilities.json"
     path.write_text(json.dumps(entries, indent=2))
-
-
-def write_features(agent) -> None:
-    """Non-MCP, built-in-to-the-runtime features toggled by capability keys."""
-    features = {"image_recognition": "image_recognition" in agent.capability_keys}
-    path = workspace_dir(agent.id) / "features.json"
-    path.write_text(json.dumps(features, indent=2))
 
 
 def remove_workspace(agent_id: int) -> None:
@@ -114,6 +174,5 @@ def ensure_workspace(agent) -> Path:
     write_cron(agent)
     write_endpoints(agent)
     write_theme(agent)
-    write_features(agent)
     write_cache_if_missing(agent)
     return workspace_dir(agent.id)

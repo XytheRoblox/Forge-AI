@@ -1,10 +1,19 @@
 export interface ModelOption {
   provider: string;
   provider_label: string;
+  family: string;
+  family_label: string;
   model_id: string;
   label: string;
   description: string;
   available: boolean;
+}
+
+export interface ModelRecommendation {
+  model_id: string;
+  provider: string;
+  label: string;
+  reason: string;
 }
 
 export interface CapabilityOption {
@@ -17,6 +26,8 @@ export interface CapabilityOption {
   requires_api_key: boolean;
   api_key_help: string | null;
   platform_key_available: boolean;
+  oauth_provider: string | null;
+  oauth_scopes: string[];
 }
 
 export interface EndpointSpec {
@@ -45,6 +56,7 @@ export interface Agent {
   has_model_api_key: boolean;
   capability_keys: string[];
   capability_api_keys_set: string[];
+  connected_accounts: Record<string, string>;
   endpoints: EndpointSpec[];
   cron_jobs: CronJobSpec[];
   theme_color: string;

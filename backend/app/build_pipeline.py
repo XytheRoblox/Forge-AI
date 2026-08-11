@@ -9,7 +9,7 @@ import croniter
 import jsonschema
 from sqlmodel import Session, select
 
-from app import docker_manager, mcp_manager, webpage_gen, workspace
+from app import docker_manager, mcp_manager, registry, webpage_gen, workspace
 from app.db import engine
 from app.models import Agent, Message
 from app.registry import CAPABILITY_OPTIONS
@@ -20,7 +20,6 @@ CAPABILITY_LOOKUP = {c.key: c for c in CAPABILITY_OPTIONS}
 STEP_NAMES = [
     "Validate configuration",
     "Write agent files",
-    "Prepare local model",
     "Start capability servers",
     "Generate interactive webpage",
     "Start container",
@@ -73,37 +72,17 @@ def get_job(job_id: str) -> Optional[BuildJob]:
     return _JOBS.get(job_id)
 
 
-FEATHERLESS_VISION_MODELS = {
-    "Qwen/Qwen2.5-VL-72B-Instruct",
-    "Qwen/Qwen2.5-VL-32B-Instruct",
-    "Qwen/Qwen2.5-VL-7B-Instruct",
-}
-
-
-def _is_vision_capable(model_provider: str, model_id: str) -> bool:
-    if model_provider == "anthropic":
-        return True
-    if model_provider == "featherless":
-        return model_id in FEATHERLESS_VISION_MODELS
-    if model_provider == "ollama":
-        return model_id == "llava"
-    return False
-
-
 def _validate(agent: Agent) -> Optional[str]:
     if not agent.name or not agent.name.strip():
         return "Agent name is required."
     if not agent.system_prompt or not agent.system_prompt.strip():
         return "No system prompt set. Write one directly or expand a manifesto first."
-    if "image_recognition" in agent.capability_keys and not _is_vision_capable(
-        agent.model_provider, agent.model_id
-    ):
-        return (
-            "Image Recognition requires a vision-capable model (any Anthropic Claude model, or "
-            f"the local LLaVA model) — this agent uses {agent.model_provider}/{agent.model_id}, "
-            "which doesn't support image input. Pick a supported model, or remove this capability."
-        )
-    if agent.model_provider != "ollama" and not agent.model_api_key:
+    # Image support is no longer validated here. Every agent accepts image
+    # uploads, and an agent whose model can't read them falls back to the
+    # vision sidecar; if the sidecar is unreachable the runtime says so in the
+    # transcript. That's a per-message degradation, not a reason to refuse to
+    # deploy an agent that may never be shown an image at all.
+    if not agent.model_api_key:
         if agent.model_provider == "featherless" and os.environ.get("FEATHERLESS_API_KEY"):
             pass
         else:
@@ -111,17 +90,20 @@ def _validate(agent: Agent) -> Optional[str]:
                 f"This agent needs its own {agent.model_provider} API key before it can deploy — "
                 "add it on the Review step."
             )
-    if agent.model_provider == "ollama":
-        mcp_capabilities = [
-            CAPABILITY_LOOKUP[key].name
-            for key in agent.capability_keys
-            if CAPABILITY_LOOKUP.get(key) and CAPABILITY_LOOKUP[key].mcp_server
-        ]
-        if mcp_capabilities:
-            return (
-                f"Local Ollama models don't support tool use yet, so {', '.join(mcp_capabilities)} "
-                "would never actually run — remove it, or pick a hosted model instead."
-            )
+    # A Google capability without a connected account would deploy and then
+    # fail on its first real request, so it's blocked here the same way a
+    # missing API key is.
+    google_keys = [
+        key
+        for key in agent.capability_keys
+        if CAPABILITY_LOOKUP.get(key) and CAPABILITY_LOOKUP[key].oauth_provider == "google"
+    ]
+    if google_keys and not (agent.oauth_grants or {}).get("google", {}).get("refresh_token"):
+        names = ", ".join(CAPABILITY_LOOKUP[k].name for k in google_keys)
+        return (
+            f"{names} need a connected Google account — use Authorize with Google on the "
+            "Review step before deploying."
+        )
     for key in agent.capability_keys:
         capability = CAPABILITY_LOOKUP.get(key)
         if not capability or not capability.requires_api_key:
@@ -177,27 +159,23 @@ def _run(job_id: str, agent_id: int) -> None:
 
         step = job.steps[2]
         step.status = "running"
-        if agent.model_provider == "ollama" and DEPLOY_MODE == "local":
-            from app import ollama_manager
-            step.detail = f"Pulling {agent.model_id!r} (first time can take a few minutes)…"
-            try:
-                ollama_manager.ensure_model_pulled(agent.model_id)
-            except RuntimeError as exc:
-                _fail(job, step, str(exc))
-                return
-            step.status = "success"
-            step.detail = f"Model {agent.model_id!r} ready."
-        else:
-            step.status = "success"
-            step.detail = "Not needed (using API-based inference)."
-
-        step = job.steps[3]
-        step.status = "running"
+        # Two kinds of capability. Agent-hosted ones need nothing started here
+        # — the agent's own container spawns them as subprocesses once it's
+        # running — so they're recorded but never dialled. Shared ones still
+        # get a container brought up and health-checked before the agent that
+        # depends on them is built.
         capability_urls: dict[str, str] = {}
+        hosted: list[str] = []
         try:
             for key in agent.capability_keys:
                 capability = CAPABILITY_LOOKUP.get(key)
                 if capability is None or not capability.wired or not capability.mcp_server:
+                    continue
+                if registry.hosted_in_agent(key):
+                    # Placeholder URL: write_capabilities keys off the entry
+                    # existing, and emits a stdio launch spec instead of a URL.
+                    capability_urls[key] = ""
+                    hosted.append(key)
                     continue
                 step.detail = f"Starting {capability.name}…"
                 capability_urls[key] = mcp_manager.ensure_running(capability.mcp_server)
@@ -210,19 +188,32 @@ def _run(job_id: str, agent_id: int) -> None:
         }
         workspace.write_capabilities(agent, capability_urls, effective_keys)
         step.status = "success"
-        step.detail = f"Started: {', '.join(capability_urls)}" if capability_urls else "None needed."
+        shared = [k for k in capability_urls if k not in hosted]
+        parts = []
+        if shared:
+            parts.append(f"started {', '.join(shared)}")
+        if hosted:
+            parts.append(f"{', '.join(hosted)} run inside the agent")
+        step.detail = "; ".join(parts).capitalize() if parts else "None needed."
 
-        step = job.steps[4]
+        step = job.steps[3]
         step.status = "running"
         try:
-            html = webpage_gen.generate_webpage(agent)
+            html, theme = webpage_gen.generate_webpage(agent)
             (workspace_dir / "web" / "index.html").write_text(html)
+            # The generated accent becomes the agent's accent, so the picker
+            # and the generated look are the same value rather than two that
+            # silently disagree. write_theme ran during ensure_workspace,
+            # before a theme existed, so theme.json is rewritten here.
+            agent.theme_color = theme.get("accent", agent.theme_color)
+            workspace.write_theme(agent)
         except RuntimeError as exc:
             _fail(job, step, str(exc))
             return
         step.status = "success"
+        step.detail = f"Themed: {theme.get('pattern')} pattern, {theme.get('font')} type"
 
-        step = job.steps[5]
+        step = job.steps[4]
         step.status = "running"
         if DEPLOY_MODE == "cloudrun":
             step.detail = "Deploying to Cloud Run…"
@@ -246,7 +237,7 @@ def _run(job_id: str, agent_id: int) -> None:
 
         # deploy() already waited for /health internally — this step exists so
         # the user sees it as a distinct, visible checkpoint.
-        step = job.steps[6]
+        step = job.steps[5]
         step.status = "running"
         if DEPLOY_MODE == "cloudrun":
             step.status = "success"
@@ -255,7 +246,7 @@ def _run(job_id: str, agent_id: int) -> None:
             step.status = "success"
             step.detail = f"Container healthy on port {container_port}"
 
-        step = job.steps[7]
+        step = job.steps[6]
         step.status = "running"
         step.detail = "Sending a test message…"
         if DEPLOY_MODE == "cloudrun":
@@ -284,7 +275,7 @@ def _run(job_id: str, agent_id: int) -> None:
         step.status = "success"
         step.detail = f"Reply: {reply[:80]}"
 
-        step = job.steps[8]
+        step = job.steps[7]
         step.status = "running"
         if not agent.endpoints:
             step.status = "success"
