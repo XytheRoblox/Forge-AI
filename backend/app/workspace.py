@@ -24,6 +24,11 @@ def workspace_dir(agent_id: int) -> Path:
     path = WORKSPACE_ROOT / str(agent_id)
     path.mkdir(parents=True, exist_ok=True)
     (path / "web").mkdir(parents=True, exist_ok=True)
+    # Where the Filesystem capability reads and writes. It lives under the
+    # workspace, not in the container's own filesystem, so an agent's files
+    # survive a redeploy and can be opened from the host — a coding agent
+    # whose work disappears every time you change its prompt is not much use.
+    (path / "files").mkdir(parents=True, exist_ok=True)
     return path
 
 

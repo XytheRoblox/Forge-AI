@@ -882,11 +882,52 @@ def _fill_required_defaults(schema: dict, arguments: dict, tool_name: str = "") 
     return filled
 
 
+# The Filesystem capability writes into the agent's own workspace volume,
+# which is real disk on the host. The MCP filesystem server has no notion of a
+# quota, and this runtime is the only chokepoint every tool call passes
+# through, so the cap is enforced here — checked before the write rather than
+# after, since a limit you notice afterwards has already been exceeded.
+FILES_ROOT = Path("/workspace/files")
+FILES_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
+_WRITE_TOOLS = {"write_file", "edit_file", "create_directory", "move_file"}
+
+
+def _files_bytes() -> int:
+    total = 0
+    for path in FILES_ROOT.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _quota_refusal(name: str, arguments: dict) -> str | None:
+    """The reason this write can't proceed, or None to let it through."""
+    if name not in _WRITE_TOOLS or not FILES_ROOT.is_dir():
+        return None
+    used = _files_bytes()
+    incoming = len(str(arguments.get("content") or "").encode("utf-8"))
+    if used + incoming <= FILES_QUOTA_BYTES:
+        return None
+    limit_gb = FILES_QUOTA_BYTES / 1_073_741_824
+    return (
+        f"Error: this agent's file storage is full "
+        f"({used / 1_073_741_824:.2f} GB of a {limit_gb:.2f} GB limit). Delete files you no "
+        "longer need before writing more, or tell the user which files are taking up the space."
+    )
+
+
 def _execute_tool(name: str, arguments: dict) -> str:
     info = _TOOL_INDEX.get(name)
     if info is None:
         _record_tool_use(name, ok=False, arguments=arguments, result=f"Error: unknown tool {name!r}")
         return f"Error: unknown tool {name!r}"
+    refusal = _quota_refusal(name, arguments)
+    if refusal is not None:
+        _record_tool_use(name, ok=False, arguments=arguments, result=refusal)
+        return refusal
     if info.get("builtin"):
         try:
             result = _run_builtin_tool(

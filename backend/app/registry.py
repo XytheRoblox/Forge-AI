@@ -41,9 +41,12 @@ def supports_vision(model_provider: str, model_id: str) -> bool:
 STDIO_SERVERS: dict[str, dict] = {
     "filesystem": {
         "command": "npx",
-        # Scoped to /scratch: the server takes its allowed roots as arguments,
-        # and handing it "/" would expose the agent's own source and secrets.
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/scratch"],
+        # Scoped to /workspace/files: the server takes its allowed roots as
+        # arguments, and handing it "/" would expose the agent's own source
+        # and secrets. /workspace is the agent's bind-mounted volume, so this
+        # persists across redeploys and is visible on the host, unlike the
+        # container-local /scratch it used to point at.
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace/files"],
     },
     "github": {
         "command": "npx",
@@ -330,10 +333,9 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         key="filesystem",
         name="Filesystem",
         description=(
-            "Read and write files in a scratch directory that belongs to this agent alone. "
-            "Useful for work that spans several steps — drafting, chunking a long document, "
-            "keeping notes between tool calls. Cleared whenever the agent is redeployed, so "
-            "it's working space rather than storage."
+            "Read and write files in a folder that belongs to this agent alone. Files persist "
+            "across redeploys and are visible on the host, so an agent can build up a project "
+            "over several sessions. Capped at 2 GB."
         ),
         icon="🗂️",
         wired=True,
