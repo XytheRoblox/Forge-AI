@@ -330,8 +330,10 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         key="filesystem",
         name="Filesystem",
         description=(
-            "Read and write files in a scratch directory. Note: this is a shared scratch space "
-            "across every agent using this capability, not private per-agent storage."
+            "Read and write files in a scratch directory that belongs to this agent alone. "
+            "Useful for work that spans several steps — drafting, chunking a long document, "
+            "keeping notes between tool calls. Cleared whenever the agent is redeployed, so "
+            "it's working space rather than storage."
         ),
         icon="🗂️",
         wired=True,

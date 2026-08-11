@@ -39,8 +39,11 @@ The user's one-line manifesto is:
 ---
 
 Write a system prompt that:
-- Opens by stating the agent's specific role and purpose in one or two sentences — no generic \
-"I'm an AI assistant, how can I help you today?" framing.
+- Is addressed TO the agent in the second person, as instructions it receives: "You are a \
+calculus tutor who…", never "I am a calculus tutor". A system prompt tells a model what to be; \
+a model describing itself in the first person is the wrong voice and reads as dialogue.
+- Opens by stating the agent's specific role and purpose in one or two sentences — not a \
+generic assistant greeting offering to help with anything.
 - Explicitly scopes the agent to that purpose: it should stay focused on the task, proactively \
 pursue it rather than passively waiting to be told each step, and briefly redirect if asked to do \
 something clearly outside its stated purpose.
@@ -87,8 +90,19 @@ The tools available, one per line as `key — name: what it does`:
 
 Pick only what the purpose genuinely calls for. An agent that answers from what it already
 knows needs nothing; recommending a tool it never calls just adds a container and a key to
-manage. Two or three is a normal answer, zero is a valid one, and more than four almost
-never is. Prefer a tool that does the job directly over one that could be made to.
+manage. Zero is a valid answer.
+
+But cover the WHOLE job, not just its last step. Walk the agent's workflow from the first
+thing it has to get hold of to the last thing it has to produce, and include a tool for each
+step it can't do unaided:
+- Material that lives on the web — pages, articles, competitor sites, documentation — needs
+  the web search and scraping tool. The agent cannot browse without it.
+- Files the user already has, or anything it must locate before opening, needs the Drive
+  tool. Reading or writing a document is a different capability from finding it.
+- Producing a document, spreadsheet or slide deck needs that specific tool, and usually
+  Drive alongside it.
+An agent that gathers, then reasons, then writes normally needs three tools, one per stage.
+Leaving out the gathering step is the most common mistake — do not make it.
 
 Respond with ONLY a JSON object, no markdown fence:
 {{"capabilities": [{{"key": "<exact key copied from the list above>", "reason": "<a sentence of six to twelve words saying what THIS agent would use it for: \"Check the student\u2019s algebra before marking it wrong\", not \"Check algebra\">"}}]}}"""
