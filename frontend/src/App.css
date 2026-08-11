@@ -1019,7 +1019,8 @@ textarea {
   gap: 10px;
 }
 
-.model-provider-group summary {
+.model-provider-group summary,
+.endpoint-templates summary {
   display: flex;
   align-items: center;
   list-style: none;
@@ -1028,15 +1029,18 @@ textarea {
 /* The family name belongs next to the disclosure arrow, not floating in the
    middle of the row — space-between put it there because the arrow counts as
    a third child. */
-.model-provider-group summary > span:first-of-type {
+.model-provider-group summary > span:first-of-type,
+.endpoint-templates summary > span:first-of-type {
   margin-right: auto;
 }
 
-.model-provider-group summary::-webkit-details-marker {
+.model-provider-group summary::-webkit-details-marker,
+.endpoint-templates summary::-webkit-details-marker {
   display: none;
 }
 
-.model-provider-group summary::before {
+.model-provider-group summary::before,
+.endpoint-templates summary::before {
   content: "▸";
   display: inline-block;
   margin-right: 8px;
@@ -1044,7 +1048,8 @@ textarea {
   transition: transform 0.12s ease;
 }
 
-.model-provider-group[open] summary::before {
+.model-provider-group[open] summary::before,
+.endpoint-templates[open] summary::before {
   transform: rotate(90deg);
 }
 
@@ -1547,4 +1552,20 @@ textarea {
 
 .error-hint {
   color: #e5484d;
+}
+
+/* Endpoint templates reuse .option-card, so they only need the one thing a
+   model card doesn't have: the route the card would create. */
+.endpoint-template-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--code-bg);
+  border-radius: 5px;
+  padding: 3px 6px;
+  align-self: flex-start;
+}
+
+.endpoint-templates {
+  margin-bottom: 12px;
 }

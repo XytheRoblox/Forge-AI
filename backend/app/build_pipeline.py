@@ -30,15 +30,31 @@ STEP_NAMES = [
 
 
 def _sample_value(prop_schema: dict):
-    if "example" in prop_schema:
-        return prop_schema["example"]
+    """A value that satisfies this property's schema, for the deploy smoke test.
+
+    The constrained keywords are checked before the type fallback because the
+    smoke test validates its own payload against the schema before sending it:
+    a bare "test" string for a field with an enum fails validation, and the
+    deploy fails on a perfectly good endpoint. That's not hypothetical — it's
+    exactly what any endpoint imported from an OpenAPI document with an enum
+    used to do."""
+    for keyword in ("example", "default", "const"):
+        if keyword in prop_schema:
+            return prop_schema[keyword]
+    if prop_schema.get("enum"):
+        return prop_schema["enum"][0]
+
     prop_type = prop_schema.get("type", "string")
+    if prop_type == "array":
+        # One element rather than none, so a minItems constraint is satisfied
+        # too. Nested so an array of enums picks a legal member.
+        items = prop_schema.get("items")
+        return [_sample_value(items)] if isinstance(items, dict) else []
     return {
         "string": "test",
         "number": 1,
         "integer": 1,
         "boolean": True,
-        "array": [],
         "object": {},
     }.get(prop_type, "test")
 

@@ -2,8 +2,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app import docker_manager, llm_client, mcp_manager
-from app.registry import CAPABILITY_OPTIONS, MODEL_OPTIONS
-from app.schemas import CapabilityOption, ModelOption
+from app.registry import CAPABILITY_OPTIONS, ENDPOINT_TEMPLATES, MODEL_OPTIONS
+from app.schemas import CapabilityOption, EndpointTemplate, ModelOption
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -35,6 +35,17 @@ def list_capabilities():
     return [
         c.model_copy(update={"platform_key_available": bool(mcp_manager.platform_key_pool(c.key))})
         for c in CAPABILITY_OPTIONS
+    ]
+
+
+@router.get("/endpoint-templates", response_model=list[EndpointTemplate])
+def list_endpoint_templates():
+    """Ready-made endpoints, with the suggested capability's display name
+    resolved so the picker doesn't need the capability catalog too."""
+    names = {c.key: c.name for c in CAPABILITY_OPTIONS}
+    return [
+        t.model_copy(update={"suggested_capability_name": names.get(t.suggested_capability or "")})
+        for t in ENDPOINT_TEMPLATES
     ]
 
 

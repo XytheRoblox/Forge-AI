@@ -1,4 +1,4 @@
-from app.schemas import CapabilityOption, ModelOption
+from app.schemas import CapabilityOption, EndpointTemplate, ModelOption
 
 # Models that accept image input natively. Everything NOT listed here still
 # supports images at the agent level — the agent runtime routes uploads
@@ -572,3 +572,239 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         wired=False,
     ),
 ]
+
+
+# Ready-made endpoints, so an API-integrating agent doesn't start from a blank
+# form. Each one is a whole EndpointSpec minus its id — the picker adds that.
+#
+# The instructions are written the way the runtime consumes them: it appends
+# `Input (JSON): {...}` and "Respond with just the result", so each instruction
+# refers to input fields by name and states the output shape exactly. Anything
+# vaguer produces a preamble the caller then has to strip.
+ENDPOINT_TEMPLATES: list[EndpointTemplate] = [
+    EndpointTemplate(
+        key="summarize",
+        name="Summarize",
+        icon="📝",
+        summary="Condense any text to a length you choose.",
+        path="/summarize",
+        description="Summarize a block of text.",
+        # `length` is an enum of sentence counts rather than a max_words
+        # integer on purpose. A word budget reads better in an API, but these
+        # models don't reliably count words — a 25-word ceiling came back at
+        # 41 no matter how forcefully the instruction was worded. Sentence
+        # counts they do honour, so the knob is one the agent can actually
+        # keep.
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "length": {
+                    "type": "string",
+                    "enum": ["one_line", "short", "detailed"],
+                    "default": "short",
+                },
+            },
+            "required": ["text"],
+        },
+        instruction=(
+            "Summarize the text in the input at the length given by `length`, defaulting to "
+            "short: `one_line` is exactly one sentence, `short` is at most three sentences, "
+            "`detailed` is at most eight. Preserve names, numbers, dates, and any decision or "
+            "action the text records — where it won't all fit, drop the least consequential "
+            "detail rather than running past the sentence limit. Write plain prose: no bullet "
+            "points, no heading, and don't open with \"This text is about\"."
+        ),
+    ),
+    EndpointTemplate(
+        key="ask",
+        name="Ask a question",
+        icon="❓",
+        summary="Answer a question, optionally only from context you pass in.",
+        path="/ask",
+        description="Answer a question, optionally against supplied context.",
+        input_schema={
+            "type": "object",
+            "properties": {"question": {"type": "string"}, "context": {"type": "string"}},
+            "required": ["question"],
+        },
+        instruction=(
+            "Answer the question. If `context` is present, answer only from it — and when it "
+            "doesn't contain the answer, say so plainly rather than filling the gap from general "
+            "knowledge. If `context` is absent, answer from what you know and from any tools you "
+            "have."
+        ),
+    ),
+    EndpointTemplate(
+        key="extract",
+        name="Extract fields",
+        icon="🧾",
+        summary="Pull named fields out of messy text as JSON.",
+        path="/extract",
+        description="Extract named fields from unstructured text.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "fields": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["text", "fields"],
+        },
+        instruction=(
+            "Extract each of the named `fields` from `text`. Respond with a single JSON object "
+            "whose keys are exactly the requested field names and nothing else — no code fence, no "
+            "commentary. Use null for any field the text doesn't contain; never guess a value."
+        ),
+    ),
+    EndpointTemplate(
+        key="classify",
+        name="Classify",
+        icon="🏷️",
+        summary="Sort text into one of your own categories.",
+        path="/classify",
+        description="Assign text to one of a caller-supplied set of categories.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "categories": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["text", "categories"],
+        },
+        instruction=(
+            "Choose the single category from `categories` that best fits `text`. Respond with that "
+            "category written exactly as it appeared in the input, and nothing else. If none of "
+            "them fit, respond with `none`."
+        ),
+    ),
+    EndpointTemplate(
+        key="translate",
+        name="Translate",
+        icon="🌐",
+        summary="Translate text into another language, formatting intact.",
+        path="/translate",
+        description="Translate text into a target language.",
+        input_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "target_language": {"type": "string"}},
+            "required": ["text", "target_language"],
+        },
+        instruction=(
+            "Translate `text` into `target_language`. Return only the translation — no "
+            "transliteration, no translator's notes, no copy of the original. Keep line breaks, "
+            "names and numbers intact, and leave code and URLs untranslated."
+        ),
+    ),
+    EndpointTemplate(
+        key="draft_reply",
+        name="Draft a reply",
+        icon="✉️",
+        summary="Write a reply to a message in the tone you pick.",
+        path="/draft-reply",
+        description="Draft a reply to an incoming message.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "message": {"type": "string"},
+                "tone": {"type": "string", "default": "friendly and professional"},
+                "notes": {"type": "string"},
+            },
+            "required": ["message"],
+        },
+        instruction=(
+            "Draft a reply to `message`. Match the tone named in `tone`, defaulting to friendly "
+            "and professional, and cover every point in `notes` if it is present. Return only the "
+            "body of the reply — no subject line, no \"here's a draft\", and no bracketed "
+            "placeholder for a name the input never gave you."
+        ),
+    ),
+    EndpointTemplate(
+        key="grade",
+        name="Grade an answer",
+        icon="🎓",
+        summary="Mark a student's answer against a rubric, with feedback.",
+        path="/grade",
+        description="Score a student answer and explain the mark.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "student_answer": {"type": "string"},
+                "rubric": {"type": "string"},
+                "max_points": {"type": "number", "default": 10},
+            },
+            "required": ["question", "student_answer"],
+        },
+        instruction=(
+            "Mark `student_answer` against `question`, applying `rubric` if one is given. Work the "
+            "problem out yourself first, then compare — do not award credit to a confident wrong "
+            "answer. Respond in exactly this shape: a first line reading `Score: X/Y` out of "
+            "`max_points` (10 if absent), then a short paragraph on what earned credit and what "
+            "didn't, then — only when the answer is wrong — the specific step where it went wrong. "
+            "Check your own solution before you mark against it; a mistake here costs the student "
+            "marks they earned."
+        ),
+        suggested_capability="wolfram_alpha",
+    ),
+    EndpointTemplate(
+        key="solve",
+        name="Solve a problem",
+        icon="🧮",
+        summary="Work a maths or science problem step by step.",
+        path="/solve",
+        description="Solve a maths or science problem, showing the working.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "problem": {"type": "string"},
+                "show_work": {"type": "boolean", "default": True},
+            },
+            "required": ["problem"],
+        },
+        instruction=(
+            "Solve `problem`. Break it into sub-problems and check each numeric or symbolic step "
+            "with a tool where you have one rather than doing the arithmetic in your head. When "
+            "`show_work` is true or absent, show the steps in order and put the final answer on a "
+            "line of its own at the end; when it is false, give only the final answer. Before you "
+            "state that final answer, re-read your own working and confirm the answer you are "
+            "about to write is the one you actually derived — a correct derivation written up "
+            "backwards is still a wrong answer."
+        ),
+        suggested_capability="wolfram_alpha",
+    ),
+    EndpointTemplate(
+        key="research",
+        name="Research brief",
+        icon="🔍",
+        summary="Research a topic on the live web and return a sourced brief.",
+        path="/research",
+        description="Research a topic on the web and return a brief with sources.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string"},
+                "max_sources": {"type": "integer", "default": 5},
+            },
+            "required": ["topic"],
+        },
+        instruction=(
+            "Research `topic` on the live web and write a brief. Search first — do not answer from "
+            "memory. Use at most `max_sources` sources, or 5 if that field is absent. Structure it "
+            "as a two-sentence summary, then the key findings as short bullets, then a `Sources:` "
+            "list of the URLs you actually opened. Say so plainly where the sources disagree or "
+            "where you could not verify something."
+        ),
+        suggested_capability="firecrawl",
+    ),
+]
+
+# A template pointing at a capability key that no longer exists would render a
+# hint for a capability the user can't attach, so catch the rename here rather
+# than in the picker.
+_CAPABILITY_KEYS = {c.key for c in CAPABILITY_OPTIONS}
+for _template in ENDPOINT_TEMPLATES:
+    if _template.suggested_capability and _template.suggested_capability not in _CAPABILITY_KEYS:
+        raise RuntimeError(
+            f"Endpoint template {_template.key!r} suggests unknown capability "
+            f"{_template.suggested_capability!r}"
+        )

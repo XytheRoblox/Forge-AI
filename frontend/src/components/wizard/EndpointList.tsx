@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EndpointSpec } from "../../types";
 import { EndpointForm } from "./EndpointForm";
+import { EndpointTemplates } from "./EndpointTemplates";
 
 interface Props {
   endpoints: EndpointSpec[];
@@ -21,6 +22,8 @@ export function EndpointList({ endpoints, onChange }: Props) {
 
   return (
     <div className="endpoint-editor">
+      <EndpointTemplates existing={endpoints} onAdd={(ep) => onChange([...endpoints, ep])} />
+
       {endpoints.length > 0 && (
         <ul className="endpoint-list">
           {endpoints.map((ep) => (

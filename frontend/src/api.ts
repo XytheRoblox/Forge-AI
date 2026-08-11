@@ -3,6 +3,7 @@ import type {
   BuildJob,
   CapabilityOption,
   ChatMessage,
+  EndpointTemplate,
   ModelOption,
   ModelRecommendation,
 } from "./types";
@@ -25,6 +26,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   listModels: () => request<ModelOption[]>("/models"),
   listCapabilities: () => request<CapabilityOption[]>("/capabilities"),
+  listEndpointTemplates: () => request<EndpointTemplate[]>("/endpoint-templates"),
   dockerStatus: () => request<{ available: boolean }>("/docker/status"),
 
   listAgents: () => request<Agent[]>("/agents"),

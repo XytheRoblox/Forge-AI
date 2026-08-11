@@ -13,6 +13,31 @@ class EndpointSpec(BaseModel):
     instruction: str
 
 
+class EndpointTemplate(BaseModel):
+    """A ready-made endpoint someone can attach in one click.
+
+    Everything below `summary` is exactly the EndpointSpec that gets created —
+    the wizard only adds an id. Kept as a distinct type rather than a bare
+    EndpointSpec so the picker has a name, an icon and a one-liner to show
+    without those leaking onto the endpoint itself."""
+
+    key: str
+    name: str
+    icon: str
+    summary: str
+    path: str
+    method: str = "POST"
+    description: str = ""
+    input_schema: dict
+    instruction: str
+    # Capability key this endpoint leans on. The endpoint still works without
+    # it — the model just answers from what it already knows instead of
+    # looking anything up — so this is a hint, not a requirement. The display
+    # name is filled in by the catalog route; the registry only stores the key.
+    suggested_capability: Optional[str] = None
+    suggested_capability_name: Optional[str] = None
+
+
 class CronJobSpec(BaseModel):
     id: str
     cron_expression: str

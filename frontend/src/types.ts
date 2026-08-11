@@ -39,6 +39,22 @@ export interface EndpointSpec {
   instruction: string;
 }
 
+/** A ready-made endpoint from the catalog. Everything from `path` down is
+ * the EndpointSpec it produces; the fields above it are only for the picker. */
+export interface EndpointTemplate {
+  key: string;
+  name: string;
+  icon: string;
+  summary: string;
+  path: string;
+  method: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  instruction: string;
+  suggested_capability: string | null;
+  suggested_capability_name: string | null;
+}
+
 export interface CronJobSpec {
   id: string;
   cron_expression: string;
