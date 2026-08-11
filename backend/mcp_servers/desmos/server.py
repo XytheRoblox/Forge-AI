@@ -8,6 +8,11 @@ calculator the user can pan, zoom and trace.
 That's better than a static image for the thing this is usually for: a student
 looking at f(x) and f'(x) together learns more from dragging the graph than
 from a screenshot of it.
+
+Runs as one shared SSE container rather than a subprocess per agent. Nothing
+here is per-agent: there's no credential to keep separate, no filesystem to
+isolate, and the output depends only on the arguments — so a process per agent
+bought nothing and cost a Python interpreter inside every agent container.
 """
 
 import json
@@ -16,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 MAX_EXPRESSIONS = 12
 
-mcp = FastMCP("Desmos")
+mcp = FastMCP("Desmos", host="0.0.0.0", port=8000)
 
 
 @mcp.tool()
@@ -44,4 +49,4 @@ def plot_graph(expressions: list[str], title: str = "") -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport="sse")

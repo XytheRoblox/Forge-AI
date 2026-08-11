@@ -105,6 +105,16 @@ MCP_SERVER_SPECS = {
         "sse_path": "/sse",
         "env_passthrough": ["FIRECRAWL_API_KEY"],
     },
+    # Keyless and stateless — the tool's output depends only on its arguments,
+    # so there is nothing to keep per-agent and one container serves everyone.
+    "desmos": {
+        "build_dir": MCP_SERVERS_DIR / "desmos",
+        "container_name": "forge-mcp-desmos",
+        "image_tag": "forge-mcp-desmos:latest",
+        "internal_port": 8000,
+        "sse_path": "/sse",
+        "env_passthrough": [],
+    },
     "playwright": {
         "build_dir": MCP_SERVERS_DIR / "playwright",
         "container_name": "forge-mcp-playwright",

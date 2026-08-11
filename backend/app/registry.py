@@ -66,10 +66,6 @@ STDIO_SERVERS: dict[str, dict] = {
         "command": "python3",
         "args": ["/app/image_server.py"],
     },
-    "desmos": {
-        "command": "python3",
-        "args": ["/app/desmos_server.py"],
-    },
 }
 
 # Every Google capability is served by one process. It's handed the agent's
