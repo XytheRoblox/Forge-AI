@@ -28,7 +28,7 @@ export const api = {
   listModels: () => request<ModelOption[]>("/models"),
   listCapabilities: () => request<CapabilityOption[]>("/capabilities"),
   recommendCapabilities: (purpose: string) =>
-    request<{ recommendations: CapabilityRecommendation[] }>("/capabilities/recommend", {
+    request<{ recommendations: CapabilityRecommendation[]; unavailable?: string }>("/capabilities/recommend", {
       method: "POST",
       body: JSON.stringify({ purpose }),
     }),
@@ -39,7 +39,7 @@ export const api = {
     capability_keys: string[];
     taken_paths: string[];
   }) =>
-    request<{ recommendations: EndpointTemplate[] }>("/endpoint-templates/recommend", {
+    request<{ recommendations: EndpointTemplate[]; unavailable?: string }>("/endpoint-templates/recommend", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

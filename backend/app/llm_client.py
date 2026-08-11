@@ -592,25 +592,25 @@ def suggest_endpoints(
         if capability_names
         else "It has no capabilities attached, so it can only reason over what the caller sends.\n"
     )
+    # Three endpoints with instructions run long, and a response cut off
+    # mid-object used to fail json.loads and drop ALL of them — which looked
+    # like "the model had no ideas" rather than a budget that was too small.
+    # _parse_endpoint_objects salvages a truncated tail as well, but not
+    # needing to is better.
+    text = _groq_text(
+        SUGGEST_ENDPOINTS_MODEL,
+        SUGGEST_ENDPOINTS_PROMPT.format(
+            name=name or "this agent",
+            purpose=purpose.strip()[:1500],
+            capabilities=capabilities,
+            taken=", ".join(taken_paths) or "none",
+            count=count,
+        ),
+        max_tokens=2600,
+    )
     try:
-        # Three endpoints with instructions run long, and a response cut off
-        # mid-object used to fail json.loads and drop ALL of them — which
-        # looked like "the model had no ideas" rather than a budget that was
-        # too small. _parse_endpoint_objects salvages a truncated tail as
-        # well, but not needing to is better.
-        text = _groq_text(
-            SUGGEST_ENDPOINTS_MODEL,
-            SUGGEST_ENDPOINTS_PROMPT.format(
-                name=name or "this agent",
-                purpose=purpose.strip()[:1500],
-                capabilities=capabilities,
-                taken=", ".join(taken_paths) or "none",
-                count=count,
-            ),
-            max_tokens=2600,
-        )
         raw_endpoints = _parse_endpoint_objects(text)
-    except Exception:  # noqa: BLE001 - a missing suggestion is not an error
+    except Exception:  # noqa: BLE001 - unparseable really is "no suggestions"
         return []
 
     taken = {p.lower() for p in taken_paths}
@@ -640,19 +640,17 @@ def recommend_capabilities(purpose: str, options: list, limit: int = 4) -> list[
     if not purpose.strip() or not wired:
         return []
     catalog = "\n".join(f"{o.key} — {o.name}: {o.description}" for o in wired)
+    text = _groq_text(
+        RECOMMEND_CAPABILITIES_MODEL,
+        RECOMMEND_CAPABILITIES_PROMPT.format(purpose=purpose.strip()[:1500], catalog=catalog),
+        max_tokens=500,
+    )
     try:
-        text = _groq_text(
-            RECOMMEND_CAPABILITIES_MODEL,
-            RECOMMEND_CAPABILITIES_PROMPT.format(
-                purpose=purpose.strip()[:1500], catalog=catalog
-            ),
-            max_tokens=500,
-        )
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end == -1:
             return []
         parsed = json.loads(text[start : end + 1])
-    except Exception:  # noqa: BLE001 - a missing suggestion is not an error
+    except Exception:  # noqa: BLE001 - unparseable really is "no suggestions"
         return []
 
     by_key = {o.key: o for o in wired}

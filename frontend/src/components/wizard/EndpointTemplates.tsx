@@ -42,6 +42,7 @@ export function EndpointTemplates({
   const [templates, setTemplates] = useState<EndpointTemplate[]>([]);
   const [suggested, setSuggested] = useState<EndpointTemplate[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState("");
   // Open state has to be held, not derived: deriving it from
   // `existing.length === 0` slammed the panel shut the moment you added your
   // first template, so a second one took two clicks.
@@ -78,7 +79,9 @@ export function EndpointTemplates({
         taken_paths: existing.map((e) => e.path),
       })
       .then((r) => {
-        if (!cancelled) setSuggested(r.recommendations);
+        if (cancelled) return;
+        setSuggested(r.recommendations);
+        setSuggestNote(r.unavailable ?? "");
       })
       .catch(() => undefined)
       .finally(() => {
@@ -125,11 +128,12 @@ export function EndpointTemplates({
 
   return (
     <>
-      {(suggesting || suggested.length > 0) && (
+      {(suggesting || suggested.length > 0 || suggestNote) && (
         <div className="endpoint-suggestions">
           <div className="endpoint-suggestions-head">
             <span>Suggested for this agent</span>
             {suggesting && <span className="field-hint">Reading what this agent is for…</span>}
+            {!suggesting && suggestNote && <span className="field-hint">{suggestNote}</span>}
           </div>
           {suggested.length > 0 && <div className="option-card-grid">{suggested.map(card)}</div>}
         </div>

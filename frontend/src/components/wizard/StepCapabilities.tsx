@@ -14,6 +14,7 @@ export function StepCapabilities({ state, update, capabilities, agent, purpose }
   const [openKeyPanel, setOpenKeyPanel] = useState<string | null>(null);
   const [tips, setTips] = useState<CapabilityRecommendation[]>([]);
   const [loadingTips, setLoadingTips] = useState(false);
+  const [tipsNote, setTipsNote] = useState("");
 
   // Asked once per purpose, like the model suggestion on the previous step.
   // A failure is silent by design: the full picker below is the real control,
@@ -28,7 +29,9 @@ export function StepCapabilities({ state, update, capabilities, agent, purpose }
     api
       .recommendCapabilities(purpose)
       .then((r) => {
-        if (!cancelled) setTips(r.recommendations);
+        if (cancelled) return;
+        setTips(r.recommendations);
+        setTipsNote(r.unavailable ?? "");
       })
       .catch(() => undefined)
       .finally(() => {
@@ -68,11 +71,12 @@ export function StepCapabilities({ state, update, capabilities, agent, purpose }
         agent, but won't do anything until this platform's library finishes wiring them up.
       </p>
 
-      {(loadingTips || tips.length > 0) && (
+      {(loadingTips || tips.length > 0 || tipsNote) && (
         <div className="capability-suggestions">
           <div className="capability-suggestions-head">
             <span>Recommended for this agent</span>
             {loadingTips && <span className="field-hint">Reading what this agent is for…</span>}
+            {!loadingTips && tipsNote && <span className="field-hint">{tipsNote}</span>}
           </div>
           {tips.length > 0 && (
             <div className="capability-suggestion-chips">

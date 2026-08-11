@@ -10,6 +10,20 @@ from app.schemas import CapabilityOption, EndpointTemplate, ModelOption
 router = APIRouter(prefix="/api", tags=["catalog"])
 
 
+def _unavailable(exc: Exception) -> str:
+    """Why suggestions couldn't be produced, in words a user can act on.
+
+    Worth distinguishing: a quota failure and "the model had nothing to
+    suggest" look identical as an empty list, and the empty list reads as the
+    feature being useless rather than temporarily out of budget."""
+    text = str(exc)
+    if "rate_limit" in text or "429" in text:
+        return "Suggestions are temporarily unavailable — the platform's model quota is used up."
+    if "GROQ_API_KEY" in text:
+        return "Suggestions need GROQ_API_KEY set on the platform."
+    return "Suggestions are temporarily unavailable."
+
+
 @router.get("/models", response_model=list[ModelOption])
 def list_models():
     return MODEL_OPTIONS
@@ -61,7 +75,11 @@ def recommend_capabilities(payload: RecommendRequest):
     purpose = payload.purpose.strip()
     if not purpose:
         return {"recommendations": []}
-    return {"recommendations": llm_client.recommend_capabilities(purpose, CAPABILITY_OPTIONS)}
+    try:
+        found = llm_client.recommend_capabilities(purpose, CAPABILITY_OPTIONS)
+    except Exception as exc:  # noqa: BLE001 - reported to the user, never fatal
+        return {"recommendations": [], "unavailable": _unavailable(exc)}
+    return {"recommendations": found}
 
 
 class SuggestEndpointsRequest(BaseModel):
@@ -84,12 +102,15 @@ def suggest_endpoints(payload: SuggestEndpointsRequest):
     the failure would surface minutes later, on a build, attributed to
     something the user chose rather than something we generated."""
     names = {c.key: c.name for c in CAPABILITY_OPTIONS}
-    suggestions = llm_client.suggest_endpoints(
-        name=payload.name,
-        purpose=payload.purpose,
-        capability_names=[names[k] for k in payload.capability_keys if k in names],
-        taken_paths=[t.path for t in ENDPOINT_TEMPLATES] + payload.taken_paths,
-    )
+    try:
+        suggestions = llm_client.suggest_endpoints(
+            name=payload.name,
+            purpose=payload.purpose,
+            capability_names=[names[k] for k in payload.capability_keys if k in names],
+            taken_paths=[t.path for t in ENDPOINT_TEMPLATES] + payload.taken_paths,
+        )
+    except Exception as exc:  # noqa: BLE001 - reported to the user, never fatal
+        return {"recommendations": [], "unavailable": _unavailable(exc)}
 
     deployable = []
     for s in suggestions:
