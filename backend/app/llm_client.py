@@ -120,17 +120,29 @@ The agent is called "{name}" and its purpose is:
 {capabilities}
 Endpoints it already has, which you must NOT propose again: {taken}
 
-Propose up to {count} endpoints that only make sense for THIS agent, aimed at a developer
-wiring it into a system — a cron job, a webhook handler, a CI step, a backend that calls it
-on every new record. Think about what someone would automate: work the agent can do
-unattended, in bulk, on a schedule, or in response to an event.
+The caller is a PROGRAM, not a person: a browser extension, a mobile app, a webhook
+handler, a cron job, a CI step, a backend calling this on every new record. Nobody is
+reading the response and deciding what to do next — the calling code has to act on it
+directly. Design for that.
 
-That means endpoints that DO something and return a result the calling code can act on —
-generate, produce, transform, decide, route, draft, schedule, extract — rather than
-endpoints that review or comment on work a human already did. "Check my answer" is a
-conversation; the chat page already handles it. A batch variant is often the strongest
-option, because a caller with one item can send a list of one, and a caller with 500 cannot
-send them one at a time.
+So each endpoint takes the raw material that program already has, and returns the finished
+thing. A voice-notes extension has a raw transcript and wants a structured document back,
+in one call — it should not have to ask three times and assemble the answer itself.
+
+Where the agent has a capability that CREATES something — Docs, Sheets, Slides, Drive,
+GitHub, image generation — the strongest endpoint uses it and returns the link or id of
+what it made. An endpoint that hands back prose for the caller to file somewhere is the
+weaker version of that same endpoint.
+
+Stay inside what this agent can actually do. Its capabilities are listed above and that
+list is complete — if transcribing audio, sending mail or querying a database isn't there,
+it cannot do it, and an endpoint that depends on it would fail on every call. The caller's
+own program does that part and sends you the result; take text where you'd want audio, and
+a URL where you'd want a file.
+
+Prefer verbs that do work: generate, produce, transform, convert, decide, route, draft,
+schedule, extract, publish. A batch variant is often the strongest option, because a caller
+with one item can send a list of one, and a caller with 500 cannot send them one at a time.
 
 Do not propose generic wrappers like /summarize or /chat, and do not propose an endpoint
 that just restates the agent's whole purpose with one text field. Do not propose an endpoint
