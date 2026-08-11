@@ -302,8 +302,9 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         key="desmos",
         name="Desmos Graphing",
         description=(
-            "Plot equations on an interactive Desmos graph the user can zoom, pan and trace — "
-            "far more useful than describing a curve in words."
+            "Plot equations on an interactive Desmos graph the user can zoom, pan and trace, or "
+            "render one as an image the agent can attach to its reply — far more useful than "
+            "describing a curve in words."
         ),
         icon="📈",
         wired=True,

@@ -972,11 +972,12 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            # After a tool call the model is reasoning about what came back.
-            # Saying "Thinking…" again makes the tool name flash past and
+            # The status names the tool for the whole time it's in play —
+            # while it runs and while the model reads what came back. Saying
+            # "Thinking…" again in between makes the name flash past and
             # vanish, which reads as though the call was abandoned.
             _turn.round = round_index
-            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
+            _set_status(f"Using {last_tool}…" if last_tool else "Thinking…")
             try:
                 response = _call_groq(use_tools=True)
             except BadRequestError:
@@ -1042,7 +1043,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                 except json.JSONDecodeError:
                     arguments = {}
                 last_tool = _tool_label(tool_call.function.name)
-                _set_status(f"Contacting {last_tool}…")
+                _set_status(f"Using {last_tool}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append(
                     {
@@ -1080,11 +1081,12 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            # After a tool call the model is reasoning about what came back.
-            # Saying "Thinking…" again makes the tool name flash past and
+            # The status names the tool for the whole time it's in play —
+            # while it runs and while the model reads what came back. Saying
+            # "Thinking…" again in between makes the name flash past and
             # vanish, which reads as though the call was abandoned.
             _turn.round = round_index
-            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
+            _set_status(f"Using {last_tool}…" if last_tool else "Thinking…")
             kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": _fit_to_budget(messages)}
             if tools:
                 kwargs["tools"] = tools
@@ -1138,7 +1140,7 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                 except json.JSONDecodeError:
                     arguments = {}
                 last_tool = _tool_label(tool_call.function.name)
-                _set_status(f"Contacting {last_tool}…")
+                _set_status(f"Using {last_tool}…")
                 result_text = _execute_tool(tool_call.function.name, arguments)
                 messages.append(
                     {
