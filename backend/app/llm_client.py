@@ -106,11 +106,24 @@ The agent is called "{name}" and its purpose is:
 {capabilities}
 Endpoints it already has, which you must NOT propose again: {taken}
 
-Propose up to {count} endpoints that only make sense for THIS agent — the job someone would
-actually automate against it. A study-planner agent might expose /plan-week; a support agent
-/triage-ticket; a nutrition agent /analyze-meal. Do not propose generic wrappers like
-/summarize or /chat, and do not propose an endpoint that just restates the agent's whole
-purpose with one text field.
+Propose up to {count} endpoints that only make sense for THIS agent, aimed at a developer
+wiring it into a system — a cron job, a webhook handler, a CI step, a backend that calls it
+on every new record. Think about what someone would automate: work the agent can do
+unattended, in bulk, on a schedule, or in response to an event.
+
+That means endpoints that DO something and return a result the calling code can act on —
+generate, produce, transform, decide, route, draft, schedule, extract — rather than
+endpoints that review or comment on work a human already did. "Check my answer" is a
+conversation; the chat page already handles it. A batch variant is often the strongest
+option, because a caller with one item can send a list of one, and a caller with 500 cannot
+send them one at a time.
+
+Do not propose generic wrappers like /summarize or /chat, and do not propose an endpoint
+that just restates the agent's whole purpose with one text field. Do not propose an endpoint
+whose job is to check, validate, verify, review or grade something a human already produced.
+
+The example below is for an unrelated agent and exists only to show the SHAPE of the answer.
+Never copy its name, path or fields.
 
 Rules for each endpoint:
 - `path` is lowercase kebab-case starting with "/", one or two words, and unique.
@@ -127,7 +140,7 @@ Rules for each endpoint:
   student's working against the problem and mark the first error" — not "Review steps".
 
 Respond with ONLY a JSON object, no markdown fence:
-{{"endpoints": [{{"name": "Plan a week", "icon": "📅", "summary": "Turn a topic list into a day-by-day study plan.", "path": "/plan-week", "method": "POST", "description": "Build a study plan for one week.", "fields": [{{"name": "topics", "type": "array", "required": true}}, {{"name": "hours_per_day", "type": "number", "required": false}}], "instruction": "Build a day-by-day study plan covering every entry in `topics`, fitting `hours_per_day` hours a day (2 if absent). Respond with one line per day and nothing else."}}]}}"""
+{{"endpoints": [{{"name": "Reorder list", "icon": "📦", "summary": "Turn a stock snapshot into a purchase order list.", "path": "/reorder-list", "method": "POST", "description": "Decide what to reorder from current stock levels.", "fields": [{{"name": "stock_levels", "type": "array", "required": true}}, {{"name": "lead_time_days", "type": "number", "required": false}}], "instruction": "For every item in `stock_levels`, decide whether it needs reordering before `lead_time_days` days (7 if absent) elapse, and how many units. Respond with one line per item needing a reorder, formatted `sku x quantity`, and nothing else."}}]}}"""
 
 
 THEME_MODEL = "llama-3.3-70b-versatile"
@@ -471,6 +484,67 @@ def _coerce_endpoint(raw: dict, taken: set[str]) -> Optional[dict]:
     }
 
 
+def _groq_text(model: str, prompt: str, max_tokens: int, attempts: int = 2) -> str:
+    """One prompt in, the model's text out, retried once.
+
+    These suggestion calls are best-effort and swallow their errors, which
+    means a single transient failure shows up as "the model had no ideas"
+    rather than as an error anyone can see. One cheap retry makes that much
+    rarer without turning a convenience into something that can block."""
+    last: Exception | None = None
+    for _ in range(max(1, attempts)):
+        try:
+            response = _get_groq().chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return _strip_thinking(response.choices[0].message.content or "")
+        except Exception as exc:  # noqa: BLE001 - retried, then reported by the caller
+            last = exc
+    raise last  # type: ignore[misc]
+
+
+def _parse_endpoint_objects(text: str) -> list[dict]:
+    """The endpoint objects in a model response, tolerating a truncated tail.
+
+    A whole-document json.loads is the fast path, but the response is a list
+    of long objects and hitting the token ceiling mid-object used to throw
+    away every complete endpoint that came before it. So on failure the
+    objects are decoded one at a time and the incomplete last one is simply
+    dropped."""
+    import json
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        try:
+            whole = json.loads(text[start : end + 1])
+            if isinstance(whole, dict) and isinstance(whole.get("endpoints"), list):
+                return [e for e in whole["endpoints"] if isinstance(e, dict)]
+        except ValueError:
+            pass
+
+    bracket = text.find("[", text.find('"endpoints"'))
+    if bracket == -1:
+        return []
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    index = bracket + 1
+    while index < len(text):
+        while index < len(text) and text[index] in ", \t\r\n":
+            index += 1
+        if index >= len(text) or text[index] != "{":
+            break
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except ValueError:
+            break  # the truncated one
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
+
+
 def suggest_endpoints(
     name: str,
     purpose: str,
@@ -493,34 +567,29 @@ def suggest_endpoints(
         else "It has no capabilities attached, so it can only reason over what the caller sends.\n"
     )
     try:
-        client = _get_groq()
-        response = client.chat.completions.create(
-            model=SUGGEST_ENDPOINTS_MODEL,
-            max_tokens=1400,
-            messages=[
-                {
-                    "role": "user",
-                    "content": SUGGEST_ENDPOINTS_PROMPT.format(
-                        name=name or "this agent",
-                        purpose=purpose.strip()[:1500],
-                        capabilities=capabilities,
-                        taken=", ".join(taken_paths) or "none",
-                        count=count,
-                    ),
-                }
-            ],
+        # Three endpoints with instructions run long, and a response cut off
+        # mid-object used to fail json.loads and drop ALL of them — which
+        # looked like "the model had no ideas" rather than a budget that was
+        # too small. _parse_endpoint_objects salvages a truncated tail as
+        # well, but not needing to is better.
+        text = _groq_text(
+            SUGGEST_ENDPOINTS_MODEL,
+            SUGGEST_ENDPOINTS_PROMPT.format(
+                name=name or "this agent",
+                purpose=purpose.strip()[:1500],
+                capabilities=capabilities,
+                taken=", ".join(taken_paths) or "none",
+                count=count,
+            ),
+            max_tokens=2600,
         )
-        text = _strip_thinking(response.choices[0].message.content or "")
-        start, end = text.find("{"), text.rfind("}")
-        if start == -1 or end == -1:
-            return []
-        parsed = json.loads(text[start : end + 1])
+        raw_endpoints = _parse_endpoint_objects(text)
     except Exception:  # noqa: BLE001 - a missing suggestion is not an error
         return []
 
     taken = {p.lower() for p in taken_paths}
     out: list[dict] = []
-    for raw in parsed.get("endpoints") or []:
+    for raw in raw_endpoints:
         if len(out) >= count:
             break
         if not isinstance(raw, dict):
@@ -546,20 +615,13 @@ def recommend_capabilities(purpose: str, options: list, limit: int = 4) -> list[
         return []
     catalog = "\n".join(f"{o.key} — {o.name}: {o.description}" for o in wired)
     try:
-        client = _get_groq()
-        response = client.chat.completions.create(
-            model=RECOMMEND_CAPABILITIES_MODEL,
+        text = _groq_text(
+            RECOMMEND_CAPABILITIES_MODEL,
+            RECOMMEND_CAPABILITIES_PROMPT.format(
+                purpose=purpose.strip()[:1500], catalog=catalog
+            ),
             max_tokens=500,
-            messages=[
-                {
-                    "role": "user",
-                    "content": RECOMMEND_CAPABILITIES_PROMPT.format(
-                        purpose=purpose.strip()[:1500], catalog=catalog
-                    ),
-                }
-            ],
         )
-        text = _strip_thinking(response.choices[0].message.content or "")
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end == -1:
             return []

@@ -814,7 +814,22 @@ def _fit_to_budget(messages: list[dict]) -> list[dict]:
     return [head, *middle, tail]
 
 
-def _fill_required_defaults(schema: dict, arguments: dict) -> dict:
+# Values for required arguments a server declares with no default, where the
+# server's own tool description names what to use when the user didn't say.
+#
+# Without these, the generic fallback fills a required string with "" — and a
+# server that treats empty as missing then rejects the call, turning "what
+# time is it?" into a validation error the model has to notice and recover
+# from. mcp-server-time's description literally reads "Use 'Etc/UTC' as local
+# timezone if no timezone provided by the user", so it's the server's answer,
+# not a guess of ours.
+_ARGUMENT_FALLBACKS: dict[str, dict[str, object]] = {
+    "get_current_time": {"timezone": "Etc/UTC"},
+    "convert_time": {"source_timezone": "Etc/UTC", "target_timezone": "Etc/UTC"},
+}
+
+
+def _fill_required_defaults(schema: dict, arguments: dict, tool_name: str = "") -> dict:
     """Supply required arguments the model left out, where a safe value exists.
 
     Models routinely omit required booleans and counters — sequentialthinking
@@ -858,6 +873,10 @@ def _fill_required_defaults(schema: dict, arguments: dict) -> dict:
             "array": [],
             "object": {},
         }
+        fallback = _ARGUMENT_FALLBACKS.get(tool_name, {})
+        if key in fallback:
+            filled[key] = fallback[key]
+            continue
         if spec.get("type") in blank:
             filled[key] = blank[spec["type"]]
     return filled
@@ -871,7 +890,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
     if info.get("builtin"):
         try:
             result = _run_builtin_tool(
-                name, _fill_required_defaults(info.get("input_schema") or {}, arguments)
+                name, _fill_required_defaults(info.get("input_schema") or {}, arguments, name)
             )
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
             result = f"Error running tool {name!r}: {exc}"
@@ -880,7 +899,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
         if builtin_ok:
             _log_tool_call(name, arguments, result)
         return result
-    call_args = _fill_required_defaults(info.get("input_schema") or {}, arguments)
+    call_args = _fill_required_defaults(info.get("input_schema") or {}, arguments, name)
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:

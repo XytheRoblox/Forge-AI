@@ -7,7 +7,7 @@ export function Header({ dockerAvailable, onHome }: Props) {
   return (
     <header className="app-header">
       <button className="brand" onClick={onHome}>
-        <span className="brand-mark">F</span>
+        <img className="brand-mark" src="/logo.png" alt="" width={34} height={34} />
         <div>
           <h1>Forge</h1>
           <p>AI Agent Builder</p>
