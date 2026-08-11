@@ -69,6 +69,10 @@ STDIO_SERVERS: dict[str, dict] = {
         "command": "python3",
         "args": ["/app/image_server.py"],
     },
+    "code_execution": {
+        "command": "python3",
+        "args": ["/app/code_server.py"],
+    },
 }
 
 # Every Google capability is served by one process. It's handed the agent's
@@ -312,6 +316,18 @@ CAPABILITY_OPTIONS: list[CapabilityOption] = [
         icon="📈",
         wired=True,
         mcp_server="desmos",
+    ),
+    CapabilityOption(
+        key="code_execution",
+        name="Code Execution",
+        description=(
+            "Run Python and shell commands in this agent's own workspace and read the output. "
+            "Lets an agent test what it writes and fix it from the traceback, instead of "
+            "handing over code nobody has run. Runs inside this agent's container."
+        ),
+        icon="⚙️",
+        wired=True,
+        mcp_server="code_execution",
     ),
     CapabilityOption(
         key="time",

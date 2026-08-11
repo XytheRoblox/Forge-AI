@@ -28,6 +28,7 @@ RUN npm install -g --no-fund --no-audit \
 # The Google server is ours rather than an npm package, so it's copied in.
 COPY google_server.py /app/google_server.py
 COPY image_server.py /app/image_server.py
+COPY code_server.py /app/code_server.py
 
 # Per-agent scratch space for the filesystem capability. Previously this was
 # one named volume shared by every agent on the host.

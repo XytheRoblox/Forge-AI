@@ -282,7 +282,15 @@ the problem beats a page of material nobody asked for.
 
 Retry a failed call only if you are changing something specific about it. Trying the same
 call again, or trying three other tools in the hope one works, wastes the user's time and
-buries the actual error."""
+buries the actual error.
+
+## A plan is not an answer
+Carry the plan out in the SAME turn you make it: call the tools, read what comes back, and
+reply with what you actually found. A reply that only describes what you intend to do — a
+numbered list of steps you have not taken, "I will now write the file", "let's break this
+down" and nothing after it — is a failed answer, because the user asked for the outcome and
+got the method instead. If a step needs a tool, that call belongs in this turn, not in a
+description of a future one."""
 
 
 PLANNING_INSTRUCTIONS = """
@@ -302,7 +310,11 @@ of them depend on the results of others. Then act on the plan rather than re-der
   you assumed. Re-planning after every step is the slow, expensive habit this tool exists to
   replace.
 
-Thinking is not free either: plan once, in as few thoughts as the problem honestly needs."""
+Thinking is not free either: plan once, in as few thoughts as the problem honestly needs.
+
+Plan by CALLING the tool, not by writing the plan out in your reply. The thinking goes in the
+call; your reply is for the result. Having planned, go straight on to the calls that carry
+the plan out — stopping after the plan wastes the turn and answers nothing."""
 
 TOOL_LOG_INSTRUCTIONS = """
 
