@@ -9,13 +9,50 @@ import type {
   ModelRecommendation,
 } from "./types";
 
-const BASE_URL = "http://localhost:8000/api";
+// Relative by design — see the proxy note in vite.config.ts. An absolute
+// localhost URL only works when the browser is on the same machine as the
+// backend, which stops being true the moment the app is tunnelled.
+const BASE_URL = "/api";
+
+// The API's shared secret, when this instance has one. It arrives once as
+// ?access_token=… on the URL — the link you'd send someone — and is kept in
+// localStorage after that, so a reload or a deep link still works. Stripped
+// from the address bar immediately so it isn't left in screen shares,
+// bookmarks or the browser history.
+const TOKEN_KEY = "forge_access_token";
+
+function readAccessToken(): string {
+  const url = new URL(window.location.href);
+  const fromUrl = url.searchParams.get("access_token");
+  if (fromUrl) {
+    localStorage.setItem(TOKEN_KEY, fromUrl);
+    url.searchParams.delete("access_token");
+    window.history.replaceState({}, "", url.toString());
+    return fromUrl;
+  }
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+let accessToken = readAccessToken();
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { "X-Forge-Token": accessToken } : {}),
+      ...(options?.headers ?? {}),
+    },
   });
+  if (response.status === 401) {
+    // A stale token is worse than none: it would fail silently on every
+    // request until someone cleared storage by hand.
+    localStorage.removeItem(TOKEN_KEY);
+    accessToken = "";
+    throw new Error(
+      "This Forge instance needs an access token. Open it with ?access_token=… on the URL."
+    );
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail || `Request failed: ${response.status}`);
