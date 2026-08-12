@@ -35,6 +35,20 @@ function readAccessToken(): string {
 
 let accessToken = readAccessToken();
 
+/** A URL the BROWSER will navigate to — an iframe src, a new tab — carrying
+ * the token as a query parameter.
+ *
+ * Navigations can't set a custom header the way fetch() can, so the header
+ * this module adds everywhere else is unavailable to them. The API accepts
+ * the token as a query parameter for exactly this case and replies with a
+ * cookie, so anything the loaded page requests afterwards is authenticated
+ * without the token appearing again. */
+export function withAccessToken(path: string): string {
+  if (!accessToken) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}access_token=${encodeURIComponent(accessToken)}`;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,

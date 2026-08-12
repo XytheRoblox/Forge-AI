@@ -1,6 +1,7 @@
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlmodel import Session, select
 
 from app import build_pipeline, cloudrun_manager, docker_manager, llm_client, webpage_gen, workspace
@@ -290,3 +291,56 @@ def chat_with_agent(agent_id: int, payload: ChatRequest, session: Session = Depe
     ).all()
 
     return ChatResponse(reply=assistant_message, history=full_history)
+
+# --- Serving an agent to people who aren't at this machine ----------------
+
+# Everything the agent container exposes: the page itself, the chat endpoint
+# it calls, and whatever custom endpoints the agent defines.
+@router.api_route(
+    "/{agent_id}/app/{subpath:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def proxy_agent(agent_id: int, subpath: str, request: Request, session: Session = Depends(get_session)):
+    """Reverse-proxy an agent's own container through this API.
+
+    An agent runs on a published port on the host, which is fine when the
+    person using it is sitting at that host. It isn't when the platform is
+    shared over a tunnel: the chat page's link points at localhost:<port>,
+    which for anybody else resolves to their own machine.
+
+    Proxying it here means one tunnel reaches everything, and the agent
+    inherits the platform's access token instead of being an unauthenticated
+    port of its own. The page's own fetches are relative, so they arrive back
+    through this same prefix.
+    """
+    agent = _get_agent_or_404(agent_id, session)
+    if not agent.container_port:
+        raise HTTPException(status_code=409, detail="This agent isn't running. Deploy it first.")
+
+    url = f"http://localhost:{agent.container_port}/{subpath}"
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            upstream = await client.request(
+                request.method,
+                url,
+                content=body or None,
+                params=dict(request.query_params),
+                headers={"content-type": request.headers.get("content-type", "application/json")},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach the agent's container: {exc}")
+
+    # Hop-by-hop headers belong to the connection we just closed, not to the
+    # response we're forwarding.
+    headers = {
+        k: v
+        for k, v in upstream.headers.items()
+        if k.lower() not in {"content-length", "transfer-encoding", "connection"}
+    }
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=headers,
+        media_type=upstream.headers.get("content-type"),
+    )

@@ -852,7 +852,7 @@ __DESMOS_SCRIPT__
       const statusText = bubble.querySelector(".typing-status-text");
       async function poll() {
         try {
-          const res = await fetch("/chat/status");
+          const res = await fetch("chat/status");
           const data = await res.json();
           if (statusText && data.status && data.status !== "idle") {
             statusText.textContent = data.status;
@@ -977,7 +977,7 @@ __DESMOS_SCRIPT__
       startStatusPolling(typingBubble);
 
       try {
-        const response = await fetch("/chat", {
+        const response = await fetch("chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ history, image }),
