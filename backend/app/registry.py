@@ -111,6 +111,16 @@ def hosted_in_agent(capability_key: str) -> bool:
 
 
 MODEL_OPTIONS: list[ModelOption] = [
+    ModelOption(
+        provider="featherless",
+        provider_label="Featherless AI",
+        family="deepseek",
+        family_label="DeepSeek",
+        model_id="deepseek-ai/DeepSeek-V3.2",
+        label="DeepSeek V3.2",
+        description="DeepSeek's latest flagship — top-tier reasoning and tool use with a very large context window. Best free model for hard, multi-step agents.",
+        available=True,
+    ),
     # Every model here is served by Featherless and has been probed against
     # the live API to confirm it emits real, structured tool calls — that's
     # the bar for working MCP capabilities. Grouping is by who built the
@@ -136,7 +146,7 @@ MODEL_OPTIONS: list[ModelOption] = [
         family_label="Llama",
         model_id="NousResearch/Hermes-4-70B",
         label="Hermes 4 70B",
-        description="Nous Research's tool-use-tuned Llama 3.1 70B — built specifically for agentic workflows and structured output.",
+        description="Nous Research's tool-use-tuned Llama 3.1 70B. Note: it is a reasoning model that writes its thinking out as ordinary reply text rather than in a separate field, so replies can arrive as visible deliberation and get cut off mid-thought. Prefer DeepSeek or Qwen unless you specifically want that.",
         available=True,
     ),
     ModelOption(
@@ -151,16 +161,6 @@ MODEL_OPTIONS: list[ModelOption] = [
     ),
 
     # --- DeepSeek ---
-    ModelOption(
-        provider="featherless",
-        provider_label="Featherless AI",
-        family="deepseek",
-        family_label="DeepSeek",
-        model_id="deepseek-ai/DeepSeek-V3.2",
-        label="DeepSeek V3.2",
-        description="DeepSeek's latest flagship — top-tier reasoning and tool use with a very large context window. Best free model for hard, multi-step agents.",
-        available=True,
-    ),
     ModelOption(
         provider="featherless",
         provider_label="Featherless AI",

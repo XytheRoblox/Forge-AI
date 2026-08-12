@@ -556,7 +556,7 @@ def _pretty_tool(name: str) -> str:
     `firecrawl_scrape`, `sequential_thinking`. Shown raw in the activity line
     they read as debug output, so underscores become spaces and the redundant
     verb prefixes some servers use are dropped."""
-    label = name.replace("_", " ").strip()
+    label = (name or "").replace("_", " ").strip()
     for prefix in ("ask ", "get ", "run "):
         if label.startswith(prefix):
             label = label[len(prefix) :]
@@ -1114,9 +1114,20 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                last_tool = _tool_label(tool_call.function.name)
+                # Hermes 4 70B sometimes emits a tool call with a null name.
+                # The assistant message already advertises the call, so the
+                # provider requires a matching tool result — skipping it would
+                # 422 the next round. An error result keeps the exchange
+                # well-formed and tells the model what went wrong, which is
+                # the same treatment a null tool-call id gets above.
+                tool_name = tool_call.function.name or ""
+                last_tool = _tool_label(tool_name) if tool_name else "a tool"
                 _set_status(f"Using {last_tool}…")
-                result_text = _execute_tool(tool_call.function.name, arguments)
+                result_text = (
+                    _execute_tool(tool_name, arguments)
+                    if tool_name
+                    else "Error: that tool call arrived with no tool name. Name the tool you want."
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -1159,10 +1170,39 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
             # vanish, which reads as though the call was abandoned.
             _turn.round = round_index
             _set_status(f"Using {last_tool}…" if last_tool else "Thinking…")
-            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": _fit_to_budget(messages)}
-            if tools:
-                kwargs["tools"] = tools
-            response = client.chat.completions.create(**kwargs)
+
+            def _call_model(use_tools: bool):
+                kwargs = {
+                    "model": MODEL_ID,
+                    "max_tokens": 2048,
+                    "messages": _fit_to_budget(messages),
+                }
+                if use_tools and tools:
+                    kwargs["tools"] = tools
+                return client.chat.completions.create(**kwargs)
+
+            try:
+                response = _call_model(use_tools=True)
+            except (BadRequestError, ValueError) as first:
+                # Two different failures, same remedy. The provider rejects a
+                # malformed tool-call generation outright (BadRequestError);
+                # or it answers with a body the SDK can't parse, which
+                # surfaces as a JSONDecodeError — a ValueError — from inside
+                # the client rather than as an API error. Neither is caused by
+                # anything this request did differently, so retry once, then
+                # answer without tools rather than failing the whole turn.
+                print(f"[tools] provider call failed ({type(first).__name__}: {first}); retrying")
+                try:
+                    response = _call_model(use_tools=True)
+                except (BadRequestError, ValueError) as second:
+                    print(f"[tools] failed twice, answering without tools: {second}")
+                    try:
+                        response = _call_model(use_tools=False)
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "The model provider returned a malformed response. "
+                            "It may be overloaded — try again in a moment."
+                        ) from exc
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -1211,9 +1251,20 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                last_tool = _tool_label(tool_call.function.name)
+                # Hermes 4 70B sometimes emits a tool call with a null name.
+                # The assistant message already advertises the call, so the
+                # provider requires a matching tool result — skipping it would
+                # 422 the next round. An error result keeps the exchange
+                # well-formed and tells the model what went wrong, which is
+                # the same treatment a null tool-call id gets above.
+                tool_name = tool_call.function.name or ""
+                last_tool = _tool_label(tool_name) if tool_name else "a tool"
                 _set_status(f"Using {last_tool}…")
-                result_text = _execute_tool(tool_call.function.name, arguments)
+                result_text = (
+                    _execute_tool(tool_name, arguments)
+                    if tool_name
+                    else "Error: that tool call arrived with no tool name. Name the tool you want."
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -1363,6 +1414,14 @@ def _make_endpoint_handler(spec: dict):
             reply = _generate_reply(_effective_system_prompt(), [{"role": "user", "content": prompt}])
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the /chat route does the same
+            # Provider SDKs raise their own exception hierarchies, none of
+            # which are RuntimeError. Without this the caller — and the deploy
+            # smoke test — got a bare "Internal Server Error" naming neither
+            # the endpoint's problem nor the provider's.
+            raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
         return {"output": reply}
 
     return handler
