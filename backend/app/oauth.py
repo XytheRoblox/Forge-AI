@@ -18,6 +18,8 @@ import json
 import os
 import time
 from typing import Optional
+
+from app import public_url
 from urllib.parse import urlencode
 
 import httpx
@@ -46,8 +48,16 @@ def _client_secret() -> Optional[str]:
 
 
 def redirect_uri() -> str:
-    """Must match a redirect URI registered on the OAuth client exactly."""
-    base = os.environ.get("PUBLIC_BACKEND_URL", "http://localhost:8000").rstrip("/")
+    """Must match a redirect URI registered on the OAuth client exactly.
+
+    This follows the instance's public base URL, which in ngrok mode is the
+    tunnel — Google redirects the USER'S browser here, and a localhost
+    redirect sends them to their own machine.
+
+    The consequence is worth stating plainly: whatever this resolves to has to
+    be registered on the OAuth client in Google Cloud, and a free ngrok
+    hostname changes on every restart."""
+    base = public_url.base_url()
     return f"{base}/api/oauth/google/callback"
 
 

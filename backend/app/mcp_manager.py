@@ -280,6 +280,16 @@ def ensure_running(mcp_server_key: str) -> str:
             _PACK_ENV_PASSTHROUGH.get(spec["container_name"], [])
         )
         env = {key: os.environ[key] for key in env_vars if os.environ.get(key)}
+        # The graphing container writes absolute image URLs into agent
+        # replies. Left to itself it uses localhost:8788, which only resolves
+        # for someone at this machine — so when the platform has a public
+        # address, point it at the proxy route instead.
+        if mcp_server_key == "desmos" and "DESMOS_PUBLIC_URL" not in env:
+            from app import public_url
+
+            base = public_url.base_url()
+            if not base.startswith(public_url.LOCAL_BACKEND):
+                env["DESMOS_PUBLIC_URL"] = f"{base}/api"
         volume_spec = spec.get("volume") or _PACK_VOLUMES.get(spec["container_name"])
         volumes = None
         if volume_spec:

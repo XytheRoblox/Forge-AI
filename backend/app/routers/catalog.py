@@ -1,13 +1,19 @@
+import re
+
+import httpx
 import jsonschema
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from app import docker_manager, llm_client, mcp_manager
+from app import docker_manager, llm_client, mcp_manager, public_url
 from app.build_pipeline import _sample_payload
 from app.registry import CAPABILITY_OPTIONS, ENDPOINT_TEMPLATES, MODEL_OPTIONS
 from app.schemas import CapabilityOption, EndpointTemplate, ModelOption
 
 router = APIRouter(prefix="/api", tags=["catalog"])
+
+# Matches the fixed host port the graphing container is published on.
+DESMOS_HOST_PORT = mcp_manager.MCP_SERVER_SPECS["desmos"]["host_port"]
 
 
 def _unavailable(exc: Exception) -> str:
@@ -125,3 +131,30 @@ def suggest_endpoints(payload: SuggestEndpointsRequest):
 @router.get("/docker/status")
 def docker_status():
     return {"available": docker_manager.is_available()}
+
+
+@router.get("/graphs/{name}")
+def graph_image(name: str):
+    """Serve a PNG rendered by the shared graphing container.
+
+    The container publishes on a fixed host port so the agent's chat page can
+    fetch its images directly, which works while the page and the browser are
+    on the same machine. Once the platform is shared, that address is the
+    visitor's own computer — so the image comes through here instead, on the
+    same origin as everything else and covered by the same access token.
+    """
+    if not re.fullmatch(r"\d+-[0-9a-f]{8}\.png", name):
+        raise HTTPException(status_code=404, detail="No such graph.")
+    try:
+        upstream = httpx.get(f"http://localhost:{DESMOS_HOST_PORT}/graphs/{name}", timeout=15.0)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Graphing container unreachable: {exc}")
+    if upstream.status_code != 200:
+        raise HTTPException(status_code=upstream.status_code, detail="No such graph.")
+    return Response(content=upstream.content, media_type="image/png")
+
+
+@router.get("/public-url")
+def public_url_status():
+    """Where this instance thinks it is reachable from, for the UI to show."""
+    return public_url.describe()
