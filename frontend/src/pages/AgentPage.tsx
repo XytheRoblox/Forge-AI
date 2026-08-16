@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, withAccessToken } from "../api";
+import { exampleRequestBody, optionalFields } from "../utils";
 import { EndpointList } from "../components/wizard/EndpointList";
 import { GoogleConnect } from "../components/wizard/GoogleConnect";
 import type { Agent, CapabilityOption, EndpointSpec } from "../types";
@@ -203,8 +204,13 @@ export function AgentPage({
                       </div>
                       <p className="endpoint-desc">{ep.description}</p>
                       <pre className="option-card-example">
-                        {`curl -X ${ep.method} ${window.location.origin}/api/agents/${agent.id}/app${ep.path} \\\n  -H "Content-Type: application/json" \\\n  -H "X-Forge-Token: <your token>" \\\n  -d '{...}'`}
+                        {`curl -X ${ep.method} ${window.location.origin}/api/agents/${agent.id}/app${ep.path} \\\n  -H "Content-Type: application/json" \\\n  -H "X-Forge-Token: <your token>" \\\n  -d '${exampleRequestBody(ep.input_schema)}'`}
                       </pre>
+                      {optionalFields(ep.input_schema).length > 0 && (
+                        <p className="field-hint">
+                          Optional: {optionalFields(ep.input_schema).join(", ")}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>
