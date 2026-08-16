@@ -50,9 +50,17 @@ GRAPH_DIR.mkdir(parents=True, exist_ok=True)
 # published on a fixed number rather than an ephemeral one.
 PUBLIC_URL = os.environ.get("DESMOS_PUBLIC_URL", "http://localhost:8788").rstrip("/")
 
-# Old renders are only needed until the page fetches them, but a chat stays
-# open for a while, so keep a generous window rather than deleting on read.
+# Two limits, because they fail differently. The count cap bounds disk against
+# a burst of graphs; the age cap stops anything lingering indefinitely, which
+# a count cap alone permits — a graph rendered once and never followed by 200
+# more stays forever.
+#
+# The tradeoff of the age cap is real and deliberate: a graph linked in an
+# older conversation stops loading once it expires, because the URL in that
+# reply outlives the file. Two hours is long enough for the session that
+# produced it and short enough that nothing accumulates.
 MAX_STORED_GRAPHS = 200
+GRAPH_TTL_SECONDS = int(os.environ.get("GRAPH_TTL_SECONDS", 2 * 60 * 60))
 
 mcp = FastMCP("Desmos", host="0.0.0.0", port=8000)
 
@@ -118,8 +126,30 @@ def _evaluate(expression: str, xs: np.ndarray):
 
 
 def _prune() -> None:
-    files = sorted(GRAPH_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
-    for stale in files[:-MAX_STORED_GRAPHS]:
+    """Drop renders that are too old, then too many.
+
+    Called when a graph is rendered AND when one is served, so an idle
+    container still expires its files — pruning only on write would keep the
+    last graphs of a quiet day indefinitely."""
+    try:
+        files = sorted(GRAPH_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return
+
+    if GRAPH_TTL_SECONDS > 0:
+        cutoff = time.time() - GRAPH_TTL_SECONDS
+        fresh = []
+        for path in files:
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+                else:
+                    fresh.append(path)
+            except OSError:
+                continue
+        files = fresh
+
+    for stale in files[:-MAX_STORED_GRAPHS] if len(files) > MAX_STORED_GRAPHS else []:
         stale.unlink(missing_ok=True)
 
 
@@ -229,6 +259,7 @@ async def serve_graph(request):
     name = request.path_params["name"]
     if not re.fullmatch(r"\d+-[0-9a-f]{8}\.png", name):
         return JSONResponse({"error": "not found"}, status_code=404)
+    _prune()
     path = GRAPH_DIR / name
     if not path.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
