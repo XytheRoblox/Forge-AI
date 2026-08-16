@@ -7,20 +7,21 @@
 <style>
   :root {
     --accent: __ACCENT_COLOR__;
-    --bg: #fff;
+    --bg-base: #fff;
     --text: #6b6375;
     --text-h: #08060d;
-    --border: #e5e4e7;
-    --code-bg: #f4f3ec;
+    --border-base: #e5e4e7;
+    --code-bg-base: #f4f3ec;
+    --pattern-base: transparent;
     --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #16171d;
+      --bg-base: #16171d;
       --text: #9ca3af;
       --text-h: #f3f4f6;
-      --border: #2e303a;
-      --code-bg: #1f2028;
+      --border-base: #2e303a;
+      --code-bg-base: #1f2028;
       --accent-bg: color-mix(in srgb, var(--accent) 20%, transparent);
     }
   }
@@ -219,6 +220,8 @@
     cursor: pointer;
   }
   button.tool-chip:hover { border-color: var(--accent); }
+  .msg a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .msg a:hover { text-decoration-thickness: 2px; }
   button.tool-chip:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -437,6 +440,24 @@
      chat behaviour above can't be reached from here. -->
 <style>
   __AGENT_THEME_CSS__
+
+  /* Every surface derives from the accent, so the colour picker changes the
+     whole page rather than just the buttons. Mixed INTO the theme's own base
+     colours rather than replacing them, so a designed theme keeps its
+     character and simply takes on the chosen hue. */
+  :root {
+    --bg: color-mix(in srgb, var(--accent) 4%, var(--bg-base));
+    --border: color-mix(in srgb, var(--accent) 22%, var(--border-base));
+    --code-bg: color-mix(in srgb, var(--accent) 9%, var(--code-bg-base));
+    --pattern-color: color-mix(in srgb, var(--accent) 20%, var(--pattern-base, transparent));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: color-mix(in srgb, var(--accent) 7%, var(--bg-base));
+      --border: color-mix(in srgb, var(--accent) 26%, var(--border-base));
+      --code-bg: color-mix(in srgb, var(--accent) 12%, var(--code-bg-base));
+    }
+  }
 </style>
 <!-- Full TeX, via MathJax. KaTeX was here first and is faster, but it
      implements a SUBSET of LaTeX — it rejects the AMS environments a maths
@@ -558,8 +579,13 @@ __DESMOS_SCRIPT__
       html = html.replace(/\\([A-Za-z]+)/g, (m, name) => GREEK[name] || SYMBOLS[name] || m);
       html = html.replace(/\^\{([^{}]+)\}/g, "<sup>$1</sup>");
       html = html.replace(/\^(-?\w+)/g, "<sup>$1</sup>");
-      html = html.replace(/_\{([^{}]+)\}/g, "<sub>$1</sub>");
-      html = html.replace(/_(-?\w+)/g, "<sub>$1</sub>");
+      // Subscripts only where the base is a SINGLE symbol at a word boundary
+      // — x_1, v_max, T_0. The old pattern matched any underscore, so every
+      // snake_case word in ordinary prose came out mangled: "math_function"
+      // rendered as "mathfunction" with the tail dropped to a subscript, and
+      // file names and identifiers were unreadable.
+      html = html.replace(/\b([A-Za-z])_\{([^{}]+)\}/g, "$1<sub>$2</sub>");
+      html = html.replace(/\b([A-Za-z])_(-?[A-Za-z0-9]+)\b/g, "$1<sub>$2</sub>");
       return html;
     }
 
@@ -599,13 +625,39 @@ __DESMOS_SCRIPT__
           '" alt="' + alt.replace(/"/g, "&quot;") + '" loading="lazy" />'
       );
 
+      // Markdown links, after images so ![alt](url) is already consumed and
+      // can't be matched again as a link. Same http(s)-only restriction: this
+      // is model output, and a javascript: or data: href would turn a reply
+      // into a script. rel/target so a link out can't reach back into the
+      // page that opened it.
+      s = s.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        (m, label, url) =>
+          '<a href="' + url.replace(/"/g, "&quot;") +
+          '" target="_blank" rel="noopener noreferrer">' + label + "</a>"
+      );
+
       // bold, italic, inline code
       s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
       s = s.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
       s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-      // Undelimited math in ordinary prose still gets the approximate pass.
+      // Undelimited math in ordinary prose still gets the approximate pass —
+      // but never inside a code span, where ^ and _ are literal characters and
+      // turning them into <sup>/<sub> corrupts the very thing being quoted.
+      // Code spans, links and images are all held out of the maths pass. A URL
+      // is full of the characters it rewrites — a_b in a path became a
+      // subscript INSIDE the href, producing a link that 404s.
+      const held = [];
+      s = s.replace(
+        /<code>[\s\S]*?<\/code>|<a\s[^>]*>[\s\S]*?<\/a>|<img\s[^>]*\/>/g,
+        (m) => {
+          held.push(m);
+          return "\u0003C" + (held.length - 1) + "\u0003";
+        }
+      );
       s = approximateMath(s);
+      s = s.replace(/\u0003C(\d+)\u0003/g, (m, i) => held[Number(i)]);
 
       // Put the math back as inert spans carrying their own source, so
       // typesetMath can render them — and re-render them later if KaTeX

@@ -352,24 +352,28 @@ def theme_css(theme: dict) -> str:
     # override the user's choice. Callers persist theme["accent"] into
     # theme.json instead, so the generated accent and the picker stay the
     # same single value.
+    # These are the *base* surfaces. The template mixes the accent into them
+    # afterwards, so the colour picker re-tints the whole page — background,
+    # borders, code blocks, motif — instead of only recolouring buttons while
+    # the page around them stayed whatever this theme baked in.
     return f""":root {{
-    --bg: {theme['bg']};
+    --bg-base: {theme['bg']};
     --text: {theme['text']};
     --text-h: {theme['text_h']};
-    --border: {theme['border']};
-    --code-bg: {theme['code_bg']};
+    --border-base: {theme['border']};
+    --code-bg-base: {theme['code_bg']};
     --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
-    --pattern-color: {theme['pattern_color']};
+    --pattern-base: {theme['pattern_color']};
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
-      --bg: {theme['dark_bg']};
+      --bg-base: {theme['dark_bg']};
       --text: {theme['dark_text']};
       --text-h: {theme['dark_text_h']};
-      --border: {theme['dark_border']};
-      --code-bg: {theme['dark_code_bg']};
+      --border-base: {theme['dark_border']};
+      --code-bg-base: {theme['dark_code_bg']};
       --accent-bg: color-mix(in srgb, var(--accent) 20%, transparent);
-      --pattern-color: color-mix(in srgb, var(--text) 14%, transparent);
+      --pattern-base: color-mix(in srgb, var(--text) 14%, transparent);
     }}
   }}
   body {{
