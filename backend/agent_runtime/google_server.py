@@ -223,16 +223,57 @@ if "google_docs" in ENABLED:
 
     @mcp.tool()
     def create_doc(title: str, text: str = "") -> str:
-        """Create a Google Doc, optionally with initial body text."""
+        """Create a Google Doc containing `text`, and return its link.
+
+        Pass the FULL document body in `text` — this is the document, not a
+        placeholder to fill in afterwards. Write the whole thing first, then
+        call this once with it. If you need to add more later, use append_doc
+        against the id this returns rather than creating a second document.
+        """
         doc = _call("POST", "https://docs.googleapis.com/v1/documents", json={"title": title})
         doc_id = doc.get("documentId")
-        if text:
-            _call(
-                "POST",
-                f"https://docs.googleapis.com/v1/documents/{doc_id}:batchUpdate",
-                json={"requests": [{"insertText": {"location": {"index": 1}, "text": text}}]},
+        link = f"https://docs.google.com/document/d/{doc_id}/edit"
+        if not text:
+            # Said as a problem, not a fact. A model that omitted the body
+            # otherwise reads "Created …" as success and moves on, leaving an
+            # empty document behind — and with no way to notice, it tends to
+            # create another one on the next turn.
+            return (
+                f"Created '{title}' but it is EMPTY — no text was supplied: {link}\n"
+                "Add the content now with append_doc(document_id="
+                f"'{doc_id}', text=...). Do not create another document."
             )
-        return f"Created '{title}' — https://docs.google.com/document/d/{doc_id}/edit"
+        _call(
+            "POST",
+            f"https://docs.googleapis.com/v1/documents/{doc_id}:batchUpdate",
+            json={"requests": [{"insertText": {"location": {"index": 1}, "text": text}}]},
+        )
+        return f"Created '{title}' with {len(text)} characters — {link}"
+
+    @mcp.tool()
+    def append_doc(document_id: str, text: str) -> str:
+        """Add text to the end of an existing Google Doc.
+
+        For building a document up over several steps, and for filling one
+        that was created empty. Without this an agent that made a document
+        before it had the content had no way to finish it.
+        """
+        if not (text or "").strip():
+            return "Error: no text to append."
+        doc = _call("GET", f"https://docs.googleapis.com/v1/documents/{document_id}")
+        # The end index of the body is where new text goes; it counts a
+        # trailing newline the API owns, so inserting AT it would fail.
+        content = doc.get("body", {}).get("content", [])
+        end = max((el.get("endIndex", 1) for el in content), default=1)
+        _call(
+            "POST",
+            f"https://docs.googleapis.com/v1/documents/{document_id}:batchUpdate",
+            json={"requests": [{"insertText": {"location": {"index": max(1, end - 1)}, "text": text}}]},
+        )
+        return (
+            f"Appended {len(text)} characters — "
+            f"https://docs.google.com/document/d/{document_id}/edit"
+        )
 
     @mcp.tool()
     def read_doc(document_id: str) -> str:
