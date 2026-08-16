@@ -4,9 +4,19 @@
   --bg: #fff;
   --border: #e5e4e7;
   --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
+  --accent: #8b2fe0;
+  --accent-strong: #7621c4;
+  --accent-ink: #ffffff;
+  --accent-bg: rgba(139, 47, 224, 0.1);
+  --accent-border: rgba(139, 47, 224, 0.5);
+
+  /* Layered surfaces, so a card on the page and a control on the card don't
+     have to share one flat background. Buttons sit on surface-2 and lift to
+     surface-3 on hover. */
+  --surface: #ffffff;
+  --surface-2: #f6f5f8;
+  --surface-3: #eceaf0;
+  --border-strong: #cfccd6;
   --social-bg: rgba(244, 243, 236, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
@@ -15,7 +25,7 @@
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
-  font: 18px/145% var(--sans);
+  font: 16px/150% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
   color: var(--text);
@@ -37,9 +47,16 @@
     --bg: #16171d;
     --border: #2e303a;
     --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
+    --accent: #a855f7;
+    --accent-strong: #b975f9;
+    --accent-ink: #12061f;
+    --accent-bg: rgba(168, 85, 247, 0.16);
+    --accent-border: rgba(168, 85, 247, 0.5);
+
+    --surface: #1b1d24;
+    --surface-2: #23262f;
+    --surface-3: #2c303a;
+    --border-strong: #3d4250;
     --social-bg: rgba(47, 48, 58, 0.5);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;

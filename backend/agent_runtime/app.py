@@ -282,7 +282,15 @@ the problem beats a page of material nobody asked for.
 
 Retry a failed call only if you are changing something specific about it. Trying the same
 call again, or trying three other tools in the hope one works, wastes the user's time and
-buries the actual error."""
+buries the actual error.
+
+## A plan is not an answer
+Carry the plan out in the SAME turn you make it: call the tools, read what comes back, and
+reply with what you actually found. A reply that only describes what you intend to do — a
+numbered list of steps you have not taken, "I will now write the file", "let's break this
+down" and nothing after it — is a failed answer, because the user asked for the outcome and
+got the method instead. If a step needs a tool, that call belongs in this turn, not in a
+description of a future one."""
 
 
 PLANNING_INSTRUCTIONS = """
@@ -302,7 +310,11 @@ of them depend on the results of others. Then act on the plan rather than re-der
   you assumed. Re-planning after every step is the slow, expensive habit this tool exists to
   replace.
 
-Thinking is not free either: plan once, in as few thoughts as the problem honestly needs."""
+Thinking is not free either: plan once, in as few thoughts as the problem honestly needs.
+
+Plan by CALLING the tool, not by writing the plan out in your reply. The thinking goes in the
+call; your reply is for the result. Having planned, go straight on to the calls that carry
+the plan out — stopping after the plan wastes the turn and answers nothing."""
 
 TOOL_LOG_INSTRUCTIONS = """
 
@@ -544,7 +556,7 @@ def _pretty_tool(name: str) -> str:
     `firecrawl_scrape`, `sequential_thinking`. Shown raw in the activity line
     they read as debug output, so underscores become spaces and the redundant
     verb prefixes some servers use are dropped."""
-    label = name.replace("_", " ").strip()
+    label = (name or "").replace("_", " ").strip()
     for prefix in ("ask ", "get ", "run "):
         if label.startswith(prefix):
             label = label[len(prefix) :]
@@ -814,7 +826,22 @@ def _fit_to_budget(messages: list[dict]) -> list[dict]:
     return [head, *middle, tail]
 
 
-def _fill_required_defaults(schema: dict, arguments: dict) -> dict:
+# Values for required arguments a server declares with no default, where the
+# server's own tool description names what to use when the user didn't say.
+#
+# Without these, the generic fallback fills a required string with "" — and a
+# server that treats empty as missing then rejects the call, turning "what
+# time is it?" into a validation error the model has to notice and recover
+# from. mcp-server-time's description literally reads "Use 'Etc/UTC' as local
+# timezone if no timezone provided by the user", so it's the server's answer,
+# not a guess of ours.
+_ARGUMENT_FALLBACKS: dict[str, dict[str, object]] = {
+    "get_current_time": {"timezone": "Etc/UTC"},
+    "convert_time": {"source_timezone": "Etc/UTC", "target_timezone": "Etc/UTC"},
+}
+
+
+def _fill_required_defaults(schema: dict, arguments: dict, tool_name: str = "") -> dict:
     """Supply required arguments the model left out, where a safe value exists.
 
     Models routinely omit required booleans and counters — sequentialthinking
@@ -858,9 +885,50 @@ def _fill_required_defaults(schema: dict, arguments: dict) -> dict:
             "array": [],
             "object": {},
         }
+        fallback = _ARGUMENT_FALLBACKS.get(tool_name, {})
+        if key in fallback:
+            filled[key] = fallback[key]
+            continue
         if spec.get("type") in blank:
             filled[key] = blank[spec["type"]]
     return filled
+
+
+# The Filesystem capability writes into the agent's own workspace volume,
+# which is real disk on the host. The MCP filesystem server has no notion of a
+# quota, and this runtime is the only chokepoint every tool call passes
+# through, so the cap is enforced here — checked before the write rather than
+# after, since a limit you notice afterwards has already been exceeded.
+FILES_ROOT = Path("/workspace/files")
+FILES_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
+_WRITE_TOOLS = {"write_file", "edit_file", "create_directory", "move_file"}
+
+
+def _files_bytes() -> int:
+    total = 0
+    for path in FILES_ROOT.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _quota_refusal(name: str, arguments: dict) -> str | None:
+    """The reason this write can't proceed, or None to let it through."""
+    if name not in _WRITE_TOOLS or not FILES_ROOT.is_dir():
+        return None
+    used = _files_bytes()
+    incoming = len(str(arguments.get("content") or "").encode("utf-8"))
+    if used + incoming <= FILES_QUOTA_BYTES:
+        return None
+    limit_gb = FILES_QUOTA_BYTES / 1_073_741_824
+    return (
+        f"Error: this agent's file storage is full "
+        f"({used / 1_073_741_824:.2f} GB of a {limit_gb:.2f} GB limit). Delete files you no "
+        "longer need before writing more, or tell the user which files are taking up the space."
+    )
 
 
 def _execute_tool(name: str, arguments: dict) -> str:
@@ -868,10 +936,14 @@ def _execute_tool(name: str, arguments: dict) -> str:
     if info is None:
         _record_tool_use(name, ok=False, arguments=arguments, result=f"Error: unknown tool {name!r}")
         return f"Error: unknown tool {name!r}"
+    refusal = _quota_refusal(name, arguments)
+    if refusal is not None:
+        _record_tool_use(name, ok=False, arguments=arguments, result=refusal)
+        return refusal
     if info.get("builtin"):
         try:
             result = _run_builtin_tool(
-                name, _fill_required_defaults(info.get("input_schema") or {}, arguments)
+                name, _fill_required_defaults(info.get("input_schema") or {}, arguments, name)
             )
         except Exception as exc:  # noqa: BLE001 - report to the model, not a 500
             result = f"Error running tool {name!r}: {exc}"
@@ -880,7 +952,7 @@ def _execute_tool(name: str, arguments: dict) -> str:
         if builtin_ok:
             _log_tool_call(name, arguments, result)
         return result
-    call_args = _fill_required_defaults(info.get("input_schema") or {}, arguments)
+    call_args = _fill_required_defaults(info.get("input_schema") or {}, arguments, name)
     if info.get("api_key_param") and info.get("api_key"):
         call_args[info["api_key_param"]] = info["api_key"]
     try:
@@ -972,11 +1044,12 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            # After a tool call the model is reasoning about what came back.
-            # Saying "Thinking…" again makes the tool name flash past and
+            # The status names the tool for the whole time it's in play —
+            # while it runs and while the model reads what came back. Saying
+            # "Thinking…" again in between makes the name flash past and
             # vanish, which reads as though the call was abandoned.
             _turn.round = round_index
-            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
+            _set_status(f"Using {last_tool}…" if last_tool else "Thinking…")
             try:
                 response = _call_groq(use_tools=True)
             except BadRequestError:
@@ -1041,9 +1114,20 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                last_tool = _tool_label(tool_call.function.name)
-                _set_status(f"Contacting {last_tool}…")
-                result_text = _execute_tool(tool_call.function.name, arguments)
+                # Hermes 4 70B sometimes emits a tool call with a null name.
+                # The assistant message already advertises the call, so the
+                # provider requires a matching tool result — skipping it would
+                # 422 the next round. An error result keeps the exchange
+                # well-formed and tells the model what went wrong, which is
+                # the same treatment a null tool-call id gets above.
+                tool_name = tool_call.function.name or ""
+                last_tool = _tool_label(tool_name) if tool_name else "a tool"
+                _set_status(f"Using {last_tool}…")
+                result_text = (
+                    _execute_tool(tool_name, arguments)
+                    if tool_name
+                    else "Error: that tool call arrived with no tool name. Name the tool you want."
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -1080,15 +1164,45 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
 
         last_tool: str = ""
         for round_index in range(MAX_TOOL_ITERATIONS):
-            # After a tool call the model is reasoning about what came back.
-            # Saying "Thinking…" again makes the tool name flash past and
+            # The status names the tool for the whole time it's in play —
+            # while it runs and while the model reads what came back. Saying
+            # "Thinking…" again in between makes the name flash past and
             # vanish, which reads as though the call was abandoned.
             _turn.round = round_index
-            _set_status(f"Reading what {last_tool} sent back…" if last_tool else "Thinking…")
-            kwargs = {"model": MODEL_ID, "max_tokens": 2048, "messages": _fit_to_budget(messages)}
-            if tools:
-                kwargs["tools"] = tools
-            response = client.chat.completions.create(**kwargs)
+            _set_status(f"Using {last_tool}…" if last_tool else "Thinking…")
+
+            def _call_model(use_tools: bool):
+                kwargs = {
+                    "model": MODEL_ID,
+                    "max_tokens": 2048,
+                    "messages": _fit_to_budget(messages),
+                }
+                if use_tools and tools:
+                    kwargs["tools"] = tools
+                return client.chat.completions.create(**kwargs)
+
+            try:
+                response = _call_model(use_tools=True)
+            except (BadRequestError, ValueError) as first:
+                # Two different failures, same remedy. The provider rejects a
+                # malformed tool-call generation outright (BadRequestError);
+                # or it answers with a body the SDK can't parse, which
+                # surfaces as a JSONDecodeError — a ValueError — from inside
+                # the client rather than as an API error. Neither is caused by
+                # anything this request did differently, so retry once, then
+                # answer without tools rather than failing the whole turn.
+                print(f"[tools] provider call failed ({type(first).__name__}: {first}); retrying")
+                try:
+                    response = _call_model(use_tools=True)
+                except (BadRequestError, ValueError) as second:
+                    print(f"[tools] failed twice, answering without tools: {second}")
+                    try:
+                        response = _call_model(use_tools=False)
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "The model provider returned a malformed response. "
+                            "It may be overloaded — try again in a moment."
+                        ) from exc
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -1137,9 +1251,20 @@ def _generate_reply(system_prompt: str, history: list[dict]) -> str:
                     arguments = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-                last_tool = _tool_label(tool_call.function.name)
-                _set_status(f"Contacting {last_tool}…")
-                result_text = _execute_tool(tool_call.function.name, arguments)
+                # Hermes 4 70B sometimes emits a tool call with a null name.
+                # The assistant message already advertises the call, so the
+                # provider requires a matching tool result — skipping it would
+                # 422 the next round. An error result keeps the exchange
+                # well-formed and tells the model what went wrong, which is
+                # the same treatment a null tool-call id gets above.
+                tool_name = tool_call.function.name or ""
+                last_tool = _tool_label(tool_name) if tool_name else "a tool"
+                _set_status(f"Using {last_tool}…")
+                result_text = (
+                    _execute_tool(tool_name, arguments)
+                    if tool_name
+                    else "Error: that tool call arrived with no tool name. Name the tool you want."
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -1289,6 +1414,14 @@ def _make_endpoint_handler(spec: dict):
             reply = _generate_reply(_effective_system_prompt(), [{"role": "user", "content": prompt}])
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the /chat route does the same
+            # Provider SDKs raise their own exception hierarchies, none of
+            # which are RuntimeError. Without this the caller — and the deploy
+            # smoke test — got a bare "Internal Server Error" naming neither
+            # the endpoint's problem nor the provider's.
+            raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
         return {"output": reply}
 
     return handler

@@ -105,6 +105,22 @@ MCP_SERVER_SPECS = {
         "sse_path": "/sse",
         "env_passthrough": ["FIRECRAWL_API_KEY"],
     },
+    # Keyless and stateless — the tool's output depends only on its arguments,
+    # so there is nothing to keep per-agent and one container serves everyone.
+    "desmos": {
+        "build_dir": MCP_SERVERS_DIR / "desmos",
+        "container_name": "forge-mcp-desmos",
+        "image_tag": "forge-mcp-desmos:latest",
+        "internal_port": 8000,
+        # Fixed rather than ephemeral, uniquely among these: this container
+        # also serves the PNGs graph_image renders, and the URL it puts in
+        # its markdown has to be one the USER'S BROWSER can fetch. A browser
+        # isn't on the Docker network, so it can't use the container name,
+        # and an ephemeral port would change the URL on every restart.
+        "host_port": 8788,
+        "sse_path": "/sse",
+        "env_passthrough": ["DESMOS_PUBLIC_URL"],
+    },
     "playwright": {
         "build_dir": MCP_SERVERS_DIR / "playwright",
         "container_name": "forge-mcp-playwright",
@@ -264,6 +280,16 @@ def ensure_running(mcp_server_key: str) -> str:
             _PACK_ENV_PASSTHROUGH.get(spec["container_name"], [])
         )
         env = {key: os.environ[key] for key in env_vars if os.environ.get(key)}
+        # The graphing container writes absolute image URLs into agent
+        # replies. Left to itself it uses localhost:8788, which only resolves
+        # for someone at this machine — so when the platform has a public
+        # address, point it at the proxy route instead.
+        if mcp_server_key == "desmos" and "DESMOS_PUBLIC_URL" not in env:
+            from app import public_url
+
+            base = public_url.base_url()
+            if not base.startswith(public_url.LOCAL_BACKEND):
+                env["DESMOS_PUBLIC_URL"] = f"{base}/api"
         volume_spec = spec.get("volume") or _PACK_VOLUMES.get(spec["container_name"])
         volumes = None
         if volume_spec:
@@ -272,7 +298,9 @@ def ensure_running(mcp_server_key: str) -> str:
             spec["image_tag"],
             name=spec["container_name"],
             environment=env,
-            ports={f"{spec['internal_port']}/tcp": None},
+            # None asks Docker for any free port; a spec that names one gets
+            # exactly it, because something outside Docker depends on the URL.
+            ports={f"{spec['internal_port']}/tcp": spec.get("host_port")},
             volumes=volumes,
             network=network,
             detach=True,

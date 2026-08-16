@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../api";
+import { api, withAccessToken } from "../api";
 import { EndpointList } from "../components/wizard/EndpointList";
 import { GoogleConnect } from "../components/wizard/GoogleConnect";
 import type { Agent, CapabilityOption, EndpointSpec } from "../types";
@@ -40,10 +40,15 @@ export function AgentPage({
     await onAgentUpdated();
   }
 
+  // Same-origin, proxied through the API rather than the container's own
+  // published port. A localhost:<port> link only works for someone sitting at
+  // the machine running Forge — for anyone the app is shared with, it points
+  // at their own computer. Going through the API also means the agent is
+  // covered by the platform's access token instead of being an open port.
   const webpageUrl = agent.service_url
     ? `${agent.service_url}/`
     : agent.container_port
-      ? `http://localhost:${agent.container_port}/`
+      ? withAccessToken(`/api/agents/${agent.id}/app/`)
       : null;
 
   async function handleRestart() {
@@ -198,7 +203,7 @@ export function AgentPage({
                       </div>
                       <p className="endpoint-desc">{ep.description}</p>
                       <pre className="option-card-example">
-                        {`curl -X ${ep.method} http://localhost:${agent.container_port}${ep.path} \\\n  -H "Content-Type: application/json" \\\n  -d '{...}'`}
+                        {`curl -X ${ep.method} ${window.location.origin}/api/agents/${agent.id}/app${ep.path} \\\n  -H "Content-Type: application/json" \\\n  -H "X-Forge-Token: <your token>" \\\n  -d '{...}'`}
                       </pre>
                     </li>
                   ))}
@@ -208,7 +213,13 @@ export function AgentPage({
             </>
           ) : (
             <>
-              <EndpointList endpoints={editingEndpoints} onChange={setEditingEndpoints} />
+              <EndpointList
+                endpoints={editingEndpoints}
+                onChange={setEditingEndpoints}
+                agentName={agent.name}
+                purpose={agent.manifesto || agent.system_prompt || ""}
+                capabilityKeys={agent.capability_keys}
+              />
               <div className="actions">
                 <button onClick={() => setEditingEndpoints(null)} disabled={savingEndpoints}>
                   Cancel

@@ -31,14 +31,9 @@
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-border));
-  color: white;
-  font-weight: 700;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   flex-shrink: 0;
+  object-fit: cover;
+  display: block;
 }
 
 .brand h1 {
@@ -161,35 +156,172 @@
   color: var(--text-h);
 }
 
-.btn-primary {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 14px;
+/* One definition of a button, and modifiers on top of it.
+   Previously four context-scoped copies of this same secondary style existed
+   (.wizard-nav button, .actions button, .endpoint-editor > button,
+   .agent-page-actions button) with slightly different padding — and because
+   each out-specified .btn-primary, the SAME primary button rendered accent on
+   one screen and grey on another. Contexts now own layout only. */
+button,
+.btn-outline-link {
+  font: inherit;
   font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 15px;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-h);
   cursor: pointer;
-  transition: opacity 0.12s ease;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
 }
 
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
+button:hover:not(:disabled),
+.btn-outline-link:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
 
-.btn-primary:disabled {
-  opacity: 0.5;
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Keyboard users get a visible ring; mouse users don't. */
+button:focus-visible,
+.btn-outline-link:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.btn-large {
-  padding: 12px 20px;
-  font-size: 15px;
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: transparent;
+}
+
+/* For destructive or quiet actions that shouldn't read as a button until
+   you're near them. */
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-h);
+}
+
+/* An icon button is a glyph, not a control with a body — `button.` so it
+   beats the element-level defaults above rather than relying on order. */
+button.btn-icon {
+  background: none;
+  border: none;
+  min-height: 0;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+button.btn-icon:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-h);
+}
+
+/* The brand is a heading that happens to be clickable. */
+button.brand {
+  background: none;
+  border: none;
+  min-height: 0;
+  padding: 0;
   border-radius: 8px;
 }
 
+button.brand:hover {
+  background: none;
+}
+
+/* Checkboxes were browser defaults sitting beside carefully styled cards —
+   the one control on the page that didn't look like it belonged. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  /* Without this the text-input padding above still applies, and border-box
+     sizing floors the box at padding + border — the square silently grows. */
+  padding: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-content: center;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+input[type="checkbox"]:hover {
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid var(--accent-ink);
+  border-bottom: 2px solid var(--accent-ink);
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.btn-large {
+  padding: 11px 20px;
+  min-height: 42px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+
 .empty-icon {
-  font-size: 24px;
+  font-size: 26px;
   color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
 }
 
 .empty-state {
@@ -290,8 +422,10 @@ textarea {
 }
 
 .capability-checkbox-row input {
-  width: auto;
-  margin-top: 3px;
+  /* `width: auto` let the native control size itself, which since the
+     checkbox became a styled box means it stretches. Size comes from the
+     shared rule now. */
+  margin-top: 2px;
   flex-shrink: 0;
 }
 
@@ -362,15 +496,14 @@ textarea {
   gap: 10px;
 }
 
-.actions button:not(.btn-primary) {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 14px;
-  color: var(--text-h);
-  cursor: pointer;
+/* A button inside a field is an action on that field, so it sits at its
+   natural width instead of stretching to the input's. */
+.field > button {
+  align-self: flex-start;
+  margin-top: 2px;
 }
+
+
 
 .error {
   color: #e5484d;
@@ -406,23 +539,29 @@ textarea {
   font-size: 15px;
 }
 
+/* Tiles rather than numbers between hairlines: the counts are the page's
+   only summary, and rules above and below made them read as a divider that
+   happened to contain text. */
 .home-stats {
-  display: flex;
-  gap: 32px;
-  padding: 20px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 24px 0 32px;
 }
 
 .home-stat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
 .stat-value {
-  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
   font-weight: 600;
   color: var(--text-h);
 }
@@ -460,11 +599,12 @@ textarea {
 
 .agent-card {
   position: relative;
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 18px;
   cursor: pointer;
-  transition: border-color 0.12s ease, transform 0.12s ease;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -472,7 +612,12 @@ textarea {
 
 .agent-card:hover {
   border-color: var(--accent-border);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.agent-card:focus-within {
+  border-color: var(--accent);
 }
 
 .agent-card h3 {
@@ -644,15 +789,7 @@ textarea {
   justify-content: space-between;
 }
 
-.wizard-nav button {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 9px 16px;
-  font-size: 14px;
-  color: var(--text-h);
-  cursor: pointer;
-}
+
 
 .option-card-grid {
   display: grid;
@@ -664,18 +801,27 @@ textarea {
   grid-template-columns: 1fr;
 }
 
+/* A card that happens to be a <button>, so it has to undo the parts of the
+   shared button style that only make sense for a control with one short label:
+   nowrap would push its description out of the card, and centring would stack
+   its contents down the middle. */
 .option-card {
+  background: var(--surface);
   text-align: left;
+  white-space: normal;
+  align-items: stretch;
+  justify-content: flex-start;
+  line-height: 1.5;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px;
-  background: var(--bg);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 8px;
   font: inherit;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
 }
 
 .option-card:hover:not(.disabled) {
@@ -781,16 +927,10 @@ textarea {
   gap: 14px;
 }
 
-.endpoint-editor > button:not(.btn-primary) {
+.endpoint-editor > button {
   align-self: flex-start;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 14px;
-  color: var(--text-h);
-  cursor: pointer;
 }
+
 
 .endpoint-form {
   display: flex;
@@ -843,14 +983,11 @@ textarea {
 
 .field-rows > button {
   align-self: flex-start;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
   font-size: 13px;
-  color: var(--text-h);
-  cursor: pointer;
+  min-height: 32px;
+  padding: 6px 12px;
 }
+
 
 /* ---------- Cron editor + collapsible ---------- */
 
@@ -877,18 +1014,28 @@ textarea {
   gap: 10px;
 }
 
-.model-provider-group summary {
+.model-provider-group summary,
+.endpoint-templates summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   list-style: none;
 }
 
-.model-provider-group summary::-webkit-details-marker {
+/* The family name belongs next to the disclosure arrow, not floating in the
+   middle of the row — space-between put it there because the arrow counts as
+   a third child. */
+.model-provider-group summary > span:first-of-type,
+.endpoint-templates summary > span:first-of-type {
+  margin-right: auto;
+}
+
+.model-provider-group summary::-webkit-details-marker,
+.endpoint-templates summary::-webkit-details-marker {
   display: none;
 }
 
-.model-provider-group summary::before {
+.model-provider-group summary::before,
+.endpoint-templates summary::before {
   content: "▸";
   display: inline-block;
   margin-right: 8px;
@@ -896,7 +1043,8 @@ textarea {
   transition: transform 0.12s ease;
 }
 
-.model-provider-group[open] summary::before {
+.model-provider-group[open] summary::before,
+.endpoint-templates[open] summary::before {
   transform: rotate(90deg);
 }
 
@@ -1171,17 +1319,12 @@ textarea {
 }
 
 .agent-page-actions button,
-.btn-outline-link {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
+.agent-page-actions .btn-outline-link {
   font-size: 13px;
-  color: var(--text-h);
-  cursor: pointer;
-  white-space: nowrap;
-  text-decoration: none;
+  min-height: 32px;
+  padding: 6px 12px;
 }
+
 
 .theme-picker {
   display: flex;
@@ -1404,4 +1547,115 @@ textarea {
 
 .error-hint {
   color: #e5484d;
+}
+
+/* Endpoint templates reuse .option-card, so they only need the one thing a
+   model card doesn't have: the route the card would create. */
+.endpoint-template-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--code-bg);
+  border-radius: 5px;
+  padding: 3px 6px;
+  align-self: flex-start;
+}
+
+.endpoint-templates {
+  margin-bottom: 12px;
+}
+
+/* Tailored suggestions sit above the stock templates and aren't collapsible —
+   they're the answer to "what would this agent expose?", so hiding them
+   behind a disclosure would bury the more useful of the two lists. */
+.endpoint-suggestions {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.endpoint-suggestions-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+/* Recommended capabilities: chips rather than another grid of cards, so the
+   suggestion reads as a shortcut into the picker below rather than a second,
+   competing copy of it. */
+.capability-suggestions {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capability-suggestions-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.capability-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.capability-chip {
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 12px;
+  min-height: 0;
+  white-space: normal;
+  text-align: left;
+  max-width: 320px;
+  background: var(--surface);
+}
+
+button.capability-chip.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.capability-chip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.capability-chip-body strong {
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.capability-chip-body span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.capability-chip-icon,
+.capability-chip-state {
+  flex-shrink: 0;
+}
+
+.capability-chip-state {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: auto;
 }

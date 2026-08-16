@@ -194,6 +194,7 @@ export function Wizard({
           update={update}
           capabilities={capabilities}
           agent={currentAgent}
+          purpose={state.manifesto || state.system_prompt}
         />
       );
       break;

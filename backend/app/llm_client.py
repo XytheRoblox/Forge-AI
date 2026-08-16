@@ -39,8 +39,11 @@ The user's one-line manifesto is:
 ---
 
 Write a system prompt that:
-- Opens by stating the agent's specific role and purpose in one or two sentences — no generic \
-"I'm an AI assistant, how can I help you today?" framing.
+- Is addressed TO the agent in the second person, as instructions it receives: "You are a \
+calculus tutor who…", never "I am a calculus tutor". A system prompt tells a model what to be; \
+a model describing itself in the first person is the wrong voice and reads as dialogue.
+- Opens by stating the agent's specific role and purpose in one or two sentences — not a \
+generic assistant greeting offering to help with anything.
 - Explicitly scopes the agent to that purpose: it should stay focused on the task, proactively \
 pursue it rather than passively waiting to be told each step, and briefly redirect if asked to do \
 something clearly outside its stated purpose.
@@ -73,6 +76,97 @@ agents suit the coder models.
 
 Respond with ONLY a JSON object, no markdown fence:
 {{"model_id": "<exact id copied from the list above>", "reason": "<one sentence, under 20 words, addressed to the user>"}}"""
+
+
+RECOMMEND_CAPABILITIES_MODEL = "llama-3.3-70b-versatile"
+
+RECOMMEND_CAPABILITIES_PROMPT = """Choose the tools an AI agent with this purpose actually needs:
+---
+{purpose}
+---
+
+The tools available, one per line as `key — name: what it does`:
+{catalog}
+
+Pick only what the purpose genuinely calls for. An agent that answers from what it already
+knows needs nothing; recommending a tool it never calls just adds a container and a key to
+manage. Zero is a valid answer.
+
+But cover the WHOLE job, not just its last step. Walk the agent's workflow from the first
+thing it has to get hold of to the last thing it has to produce, and include a tool for each
+step it can't do unaided:
+- Material that lives on the web — pages, articles, competitor sites, documentation — needs
+  the web search and scraping tool. The agent cannot browse without it.
+- Files the user already has, or anything it must locate before opening, needs the Drive
+  tool. Reading or writing a document is a different capability from finding it.
+- Producing a document, spreadsheet or slide deck needs that specific tool, and usually
+  Drive alongside it.
+An agent that gathers, then reasons, then writes normally needs three tools, one per stage.
+Leaving out the gathering step is the most common mistake — do not make it.
+
+Respond with ONLY a JSON object, no markdown fence:
+{{"capabilities": [{{"key": "<exact key copied from the list above>", "reason": "<a sentence of six to twelve words saying what THIS agent would use it for: \"Check the student\u2019s algebra before marking it wrong\", not \"Check algebra\">"}}]}}"""
+
+
+SUGGEST_ENDPOINTS_MODEL = "llama-3.3-70b-versatile"
+
+SUGGEST_ENDPOINTS_PROMPT = """Design API endpoints for a specific AI agent, for developers who \
+want to call it from their own code.
+
+The agent is called "{name}" and its purpose is:
+---
+{purpose}
+---
+{capabilities}
+Endpoints it already has, which you must NOT propose again: {taken}
+
+The caller is a PROGRAM, not a person: a browser extension, a mobile app, a webhook
+handler, a cron job, a CI step, a backend calling this on every new record. Nobody is
+reading the response and deciding what to do next — the calling code has to act on it
+directly. Design for that.
+
+So each endpoint takes the raw material that program already has, and returns the finished
+thing. A voice-notes extension has a raw transcript and wants a structured document back,
+in one call — it should not have to ask three times and assemble the answer itself.
+
+Where the agent has a capability that CREATES something — Docs, Sheets, Slides, Drive,
+GitHub, image generation — the strongest endpoint uses it and returns the link or id of
+what it made. An endpoint that hands back prose for the caller to file somewhere is the
+weaker version of that same endpoint.
+
+Stay inside what this agent can actually do. Its capabilities are listed above and that
+list is complete — if transcribing audio, sending mail or querying a database isn't there,
+it cannot do it, and an endpoint that depends on it would fail on every call. The caller's
+own program does that part and sends you the result; take text where you'd want audio, and
+a URL where you'd want a file.
+
+Prefer verbs that do work: generate, produce, transform, convert, decide, route, draft,
+schedule, extract, publish. A batch variant is often the strongest option, because a caller
+with one item can send a list of one, and a caller with 500 cannot send them one at a time.
+
+Do not propose generic wrappers like /summarize or /chat, and do not propose an endpoint
+that just restates the agent's whole purpose with one text field. Do not propose an endpoint
+whose job is to check, validate, verify, review or grade something a human already produced.
+
+The example below is for an unrelated agent and exists only to show the SHAPE of the answer.
+Never copy its name, path or fields.
+
+Rules for each endpoint:
+- `path` is lowercase kebab-case starting with "/", one or two words, and unique.
+- `fields` are the JSON inputs the caller sends. Give each a name in lower_snake_case and a
+  type of string, number, boolean, array or object. Mark a field required only when the
+  endpoint is meaningless without it. Two to four fields is usually right.
+- Inputs are JSON values only. There are no file uploads and no binary — a field named
+  something_file or image_data can never be filled. When the agent needs a document, take a
+  URL to it, or the text itself, and name the field accordingly.
+- `instruction` is what the agent is told to do with that input. Name the fields explicitly,
+  and state the exact output shape you want back — the caller gets raw text, so "respond with
+  only the rewritten paragraph" beats "help the user". Two or three sentences.
+- `summary` is a full sentence of six to twelve words, shown on a card in the UI. "Check a
+  student's working against the problem and mark the first error" — not "Review steps".
+
+Respond with ONLY a JSON object, no markdown fence:
+{{"endpoints": [{{"name": "Reorder list", "icon": "📦", "summary": "Turn a stock snapshot into a purchase order list.", "path": "/reorder-list", "method": "POST", "description": "Decide what to reorder from current stock levels.", "fields": [{{"name": "stock_levels", "type": "array", "required": true}}, {{"name": "lead_time_days", "type": "number", "required": false}}], "instruction": "For every item in `stock_levels`, decide whether it needs reordering before `lead_time_days` days (7 if absent) elapse, and how many units. Respond with one line per item needing a reorder, formatted `sku x quantity`, and nothing else."}}]}}"""
 
 
 THEME_MODEL = "llama-3.3-70b-versatile"
@@ -346,3 +440,237 @@ def expand_manifesto(manifesto: str) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     return _strip_thinking(response.choices[0].message.content)
+
+
+
+# What the visual endpoint builder offers, so a suggested field can always be
+# rebuilt and edited in the same form.
+_FIELD_TYPES = {"string", "number", "boolean", "array", "object"}
+_PATH_RE = re.compile(r"^/[a-z0-9][a-z0-9\-]{0,30}(/[a-z0-9][a-z0-9\-]{0,30})?$")
+_FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+_METHODS = {"POST", "GET", "PUT", "PATCH"}
+
+# Routes the agent runtime serves itself. A suggestion landing on one of these
+# would be registered second and never reached, so the endpoint would look
+# attached and simply not work.
+_RESERVED_PATHS = {"/", "/chat", "/chat/status", "/health", "/cache/update", "/docs", "/openapi.json"}
+
+
+def _coerce_endpoint(raw: dict, taken: set[str]) -> Optional[dict]:
+    """Turn one model-authored endpoint into a safe EndpointTemplate dict.
+
+    Fields come back as a name/type/required list rather than a JSON Schema,
+    and the schema is compiled here — a model-authored schema would be handed
+    straight to jsonschema.validate on every request to the deployed agent,
+    and a malformed one breaks the endpoint at runtime rather than here.
+    Anything that doesn't fit is dropped rather than repaired: a wrong
+    suggestion costs more than a missing one."""
+    path = str(raw.get("path") or "").strip().lower()
+    if not _PATH_RE.match(path) or path in _RESERVED_PATHS or path in taken:
+        return None
+    method = str(raw.get("method") or "POST").strip().upper()
+    if method not in _METHODS:
+        method = "POST"
+
+    properties: dict[str, dict] = {}
+    required: list[str] = []
+    for field in raw.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        fname = str(field.get("name") or "").strip().lower()
+        ftype = str(field.get("type") or "string").strip().lower()
+        if not _FIELD_NAME_RE.match(fname) or fname in properties:
+            continue
+        properties[fname] = {"type": ftype if ftype in _FIELD_TYPES else "string"}
+        if field.get("required"):
+            required.append(fname)
+    if not properties:
+        return None
+
+    instruction = str(raw.get("instruction") or "").strip()
+    name = str(raw.get("name") or "").strip()
+    if not instruction or not name:
+        return None
+
+    icon = str(raw.get("icon") or "").strip()
+    return {
+        "key": f"suggested{path.replace('/', '_').replace('-', '_')}",
+        "name": name[:40],
+        # One emoji, or none — a model that answers with a word here shouldn't
+        # put a word where the card draws an icon.
+        "icon": icon if 0 < len(icon) <= 2 else "\u2728",
+        "summary": (str(raw.get("summary") or "").strip() or instruction)[:90],
+        "path": path,
+        "method": method,
+        "description": str(raw.get("description") or "").strip()[:120],
+        "input_schema": {"type": "object", "properties": properties, "required": required},
+        "instruction": instruction[:1200],
+        "suggested_capability": None,
+        "suggested_capability_name": None,
+    }
+
+
+def _groq_text(model: str, prompt: str, max_tokens: int, attempts: int = 2) -> str:
+    """One prompt in, the model's text out, retried once.
+
+    These suggestion calls are best-effort and swallow their errors, which
+    means a single transient failure shows up as "the model had no ideas"
+    rather than as an error anyone can see. One cheap retry makes that much
+    rarer without turning a convenience into something that can block."""
+    last: Exception | None = None
+    for _ in range(max(1, attempts)):
+        try:
+            response = _get_groq().chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return _strip_thinking(response.choices[0].message.content or "")
+        except Exception as exc:  # noqa: BLE001 - retried, then reported by the caller
+            last = exc
+    raise last  # type: ignore[misc]
+
+
+def _parse_endpoint_objects(text: str) -> list[dict]:
+    """The endpoint objects in a model response, tolerating a truncated tail.
+
+    A whole-document json.loads is the fast path, but the response is a list
+    of long objects and hitting the token ceiling mid-object used to throw
+    away every complete endpoint that came before it. So on failure the
+    objects are decoded one at a time and the incomplete last one is simply
+    dropped."""
+    import json
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        try:
+            whole = json.loads(text[start : end + 1])
+            if isinstance(whole, dict) and isinstance(whole.get("endpoints"), list):
+                return [e for e in whole["endpoints"] if isinstance(e, dict)]
+        except ValueError:
+            pass
+
+    bracket = text.find("[", text.find('"endpoints"'))
+    if bracket == -1:
+        return []
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    index = bracket + 1
+    while index < len(text):
+        while index < len(text) and text[index] in ", \t\r\n":
+            index += 1
+        if index >= len(text) or text[index] != "{":
+            break
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except ValueError:
+            break  # the truncated one
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
+
+
+def suggest_endpoints(
+    name: str,
+    purpose: str,
+    capability_names: list[str],
+    taken_paths: list[str],
+    count: int = 3,
+) -> list[dict]:
+    """Propose endpoints that suit this specific agent.
+
+    Same contract as recommend_model: this is a convenience, so every failure
+    path — no key, bad JSON, nothing usable in the response — returns an empty
+    list and the stock templates carry on below it."""
+    import json
+
+    if not purpose.strip():
+        return []
+    capabilities = (
+        f"Capabilities it can call: {', '.join(capability_names)}.\n"
+        if capability_names
+        else "It has no capabilities attached, so it can only reason over what the caller sends.\n"
+    )
+    # Three endpoints with instructions run long, and a response cut off
+    # mid-object used to fail json.loads and drop ALL of them — which looked
+    # like "the model had no ideas" rather than a budget that was too small.
+    # _parse_endpoint_objects salvages a truncated tail as well, but not
+    # needing to is better.
+    text = _groq_text(
+        SUGGEST_ENDPOINTS_MODEL,
+        SUGGEST_ENDPOINTS_PROMPT.format(
+            name=name or "this agent",
+            purpose=purpose.strip()[:1500],
+            capabilities=capabilities,
+            taken=", ".join(taken_paths) or "none",
+            count=count,
+        ),
+        max_tokens=2600,
+    )
+    try:
+        raw_endpoints = _parse_endpoint_objects(text)
+    except Exception:  # noqa: BLE001 - unparseable really is "no suggestions"
+        return []
+
+    taken = {p.lower() for p in taken_paths}
+    out: list[dict] = []
+    for raw in raw_endpoints:
+        if len(out) >= count:
+            break
+        if not isinstance(raw, dict):
+            continue
+        endpoint = _coerce_endpoint(raw, taken)
+        if endpoint:
+            taken.add(endpoint["path"])
+            out.append(endpoint)
+    return out
+
+
+def recommend_capabilities(purpose: str, options: list, limit: int = 4) -> list[dict]:
+    """Suggest the capabilities this agent's purpose actually calls for.
+
+    Only wired capabilities are offered to the model: an unwired one attaches
+    but does nothing, so recommending it would be advice to add something that
+    can't work yet. Keys are checked against the catalog rather than trusted —
+    an invented key would render a card that toggles nothing."""
+    import json
+
+    wired = [o for o in options if o.wired]
+    if not purpose.strip() or not wired:
+        return []
+    catalog = "\n".join(f"{o.key} — {o.name}: {o.description}" for o in wired)
+    text = _groq_text(
+        RECOMMEND_CAPABILITIES_MODEL,
+        RECOMMEND_CAPABILITIES_PROMPT.format(purpose=purpose.strip()[:1500], catalog=catalog),
+        max_tokens=500,
+    )
+    try:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1:
+            return []
+        parsed = json.loads(text[start : end + 1])
+    except Exception:  # noqa: BLE001 - unparseable really is "no suggestions"
+        return []
+
+    by_key = {o.key: o for o in wired}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for raw in parsed.get("capabilities") or []:
+        if len(out) >= limit:
+            break
+        if not isinstance(raw, dict):
+            continue
+        chosen = by_key.get(str(raw.get("key") or "").strip())
+        if chosen is None or chosen.key in seen:
+            continue
+        seen.add(chosen.key)
+        out.append(
+            {
+                "key": chosen.key,
+                "name": chosen.name,
+                "icon": chosen.icon,
+                "reason": str(raw.get("reason") or "").strip()[:120],
+            }
+        )
+    return out

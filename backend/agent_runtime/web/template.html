@@ -333,14 +333,41 @@
   #extra-inputs {
     padding: 0 20px;
   }
+  /* The row itself is always shown, because dictation doesn't depend on an
+     agent accepting images — only the image controls inside it are gated. */
   #image-upload-row {
-    display: none;
+    display: flex;
     align-items: center;
     gap: 10px;
     padding-bottom: 10px;
   }
-  body[data-image-upload="true"] #image-upload-row {
-    display: flex;
+  body:not([data-image-upload="true"]) #image-upload-btn,
+  body:not([data-image-upload="true"]) #image-preview-wrap {
+    display: none;
+  }
+  /* Hidden until the script confirms the browser can actually do this, so
+     nobody is offered a button that silently does nothing. */
+  #dictate-btn {
+    display: none;
+  }
+  #dictate-btn.available {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #dictate-btn.listening {
+    border-color: #e5484d;
+    color: #e5484d;
+    animation: dictate-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes dictate-pulse {
+    50% {
+      opacity: 0.55;
+    }
+  }
+  #dictate-note {
+    font-size: 12px;
+    color: var(--text);
   }
   #image-upload-row button {
     background: var(--code-bg);
@@ -467,6 +494,8 @@ __DESMOS_SCRIPT__
     <div id="image-upload-row">
       <input id="image-input" type="file" accept="image/*" style="display: none" />
       <button id="image-upload-btn" type="button">📷 Attach image</button>
+      <button id="dictate-btn" type="button" title="Dictate a message">🎤 Dictate</button>
+      <span id="dictate-note"></span>
       <div id="image-preview-wrap">
         <img id="image-preview" alt="Selected image preview" />
         <button id="image-remove-btn" type="button" title="Remove image">×</button>
@@ -823,7 +852,7 @@ __DESMOS_SCRIPT__
       const statusText = bubble.querySelector(".typing-status-text");
       async function poll() {
         try {
-          const res = await fetch("/chat/status");
+          const res = await fetch("chat/status");
           const data = await res.json();
           if (statusText && data.status && data.status !== "idle") {
             statusText.textContent = data.status;
@@ -866,6 +895,74 @@ __DESMOS_SCRIPT__
 
     imageRemoveBtn?.addEventListener("click", clearPendingImage);
 
+    // Dictation, via the browser's own speech recognition. Chrome and Edge
+    // implement it; Firefox does not, so the button stays hidden there rather
+    // than appearing and doing nothing when pressed. Note this sends audio to
+    // the browser vendor's speech service — it is not transcribed on device.
+    const dictateBtn = document.getElementById("dictate-btn");
+    const dictateNote = document.getElementById("dictate-note");
+    const SpeechRecognizer = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognizer && dictateBtn) {
+      dictateBtn.classList.add("available");
+      const recognizer = new SpeechRecognizer();
+      recognizer.continuous = true;
+      recognizer.interimResults = true;
+      recognizer.lang = navigator.language || "en-US";
+
+      let listening = false;
+      // What was in the box when dictation started. Interim results rewrite
+      // the tail on every event, so without a fixed base the text the user
+      // had already typed would be overwritten.
+      let baseText = "";
+
+      function setListening(on) {
+        listening = on;
+        dictateBtn.classList.toggle("listening", on);
+        dictateBtn.textContent = on ? "⏹ Stop" : "🎤 Dictate";
+      }
+
+      dictateBtn.addEventListener("click", () => {
+        if (listening) {
+          recognizer.stop();
+          return;
+        }
+        baseText = inputEl.value.trim();
+        dictateNote.textContent = "";
+        try {
+          recognizer.start();
+        } catch (err) {
+          // start() throws if called while already starting; harmless.
+        }
+      });
+
+      recognizer.addEventListener("start", () => setListening(true));
+
+      recognizer.addEventListener("result", (event) => {
+        let text = "";
+        for (let i = 0; i < event.results.length; i += 1) {
+          text += event.results[i][0].transcript;
+        }
+        inputEl.value = (baseText ? baseText + " " : "") + text.trim();
+      });
+
+      recognizer.addEventListener("error", (event) => {
+        setListening(false);
+        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          dictateNote.textContent = "Microphone blocked — allow access in your browser.";
+        } else if (event.error === "no-speech") {
+          dictateNote.textContent = "Didn't catch anything.";
+        } else if (event.error !== "aborted") {
+          dictateNote.textContent = "Dictation stopped: " + event.error;
+        }
+      });
+
+      recognizer.addEventListener("end", () => {
+        setListening(false);
+        inputEl.focus();
+      });
+    }
+
     async function sendMessage() {
       const text = inputEl.value.trim();
       if (!text && !pendingImage) return;
@@ -880,7 +977,7 @@ __DESMOS_SCRIPT__
       startStatusPolling(typingBubble);
 
       try {
-        const response = await fetch("/chat", {
+        const response = await fetch("chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ history, image }),

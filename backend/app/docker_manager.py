@@ -268,7 +268,11 @@ def call_endpoint(agent, method: str, path: str, payload: dict) -> dict:
             method,
             f"http://localhost:{agent.container_port}{path}",
             json=payload,
-            timeout=60.0,
+            # The same budget the chat probe gets. An endpoint runs the same
+            # model with the same capabilities attached, so a generation that
+            # chains a few tool calls takes just as long — 60s here failed
+            # deploys on endpoints that were working, just slowly.
+            timeout=180.0,
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
